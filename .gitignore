@@ -1,0 +1,24 @@
+# 二进制
+/tzzb
+/tzzb-cli
+/tzzb.exe
+/dist/
+
+# 本地 / IDE
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
+
+# Cookie / 密钥（若误放到仓库旁）
+cookie.txt
+cookies
+.env
+.env.*
+
+# 导出临时文件
+accounts_*.csv
+accounts_*.json
+positions_*.csv
+positions_*.json

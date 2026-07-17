@@ -17,6 +17,8 @@ var (
 	filterAccount string
 	filterType    string // all / stock / fund
 	flatList      bool
+	sortBy        string // value/day/hold/rate/dayrate/code/name/count
+	sortAsc       bool
 )
 
 var positionCmd = &cobra.Command{
@@ -34,7 +36,7 @@ var positionCmd = &cobra.Command{
 var positionListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "按账户查看持仓明细",
-	Long:  `默认按账户分块展示；加 --flat 打成一张大表（带账户列）。股票行会附带实时今日盈亏。`,
+	Long:  `默认按账户分块展示；加 --flat 打成一张大表（带账户列）。股票行按插件口径重算实时今日盈亏。`,
 	Run: func(cmd *cobra.Command, args []string) {
 		accounts := mustLoadAccounts()
 		rows := collectRows(accounts, filterAccount, filterType)
@@ -42,19 +44,22 @@ var positionListCmd = &cobra.Command{
 			fmt.Println("暂无持仓")
 			return
 		}
-		quotes := fetchQuotesForRows(rows)
+		ctx := loadLiveContext(accounts, rows)
 		if flatList {
-			printFlat(rows, quotes)
+			printFlat(rows, ctx)
 			return
 		}
-		printByAccount(rows, quotes)
+		printByAccount(rows, ctx)
 	},
 }
 
 var positionTotalCmd = &cobra.Command{
 	Use:   "total",
 	Short: "跨账户按代码汇总",
-	Long:  `把所有账户里相同代码的持仓合并成一行。股票/ETF 附实时今日盈亏。`,
+	Long: `把所有账户里相同代码的持仓合并成一行。股票/ETF 按插件口径重算实时今日盈亏。
+
+排序（-s/--sort）: value(默认) day hold rate dayrate code name count
+升序加 --asc，默认降序。`,
 	Run: func(cmd *cobra.Command, args []string) {
 		accounts := mustLoadAccounts()
 		rows := collectRows(accounts, filterAccount, filterType)
@@ -62,15 +67,24 @@ var positionTotalCmd = &cobra.Command{
 			fmt.Println("暂无持仓")
 			return
 		}
-		quotes := fetchQuotesForRows(rows)
-		printTotal(mergeByCode(rows), quotes)
+		ctx := loadLiveContext(accounts, rows)
+		printTotal(mergeByCode(rows), ctx)
 	},
 }
 
 var positionStockCmd = &cobra.Command{
 	Use:   "stock",
 	Short: "股票/ETF 持仓（跨账户汇总）",
-	Long:  `只看普通/手动/两融账户，按代码跨账户合并，并显示实时今日盈亏。`,
+	Long: `只看普通/手动/两融账户，按代码跨账户合并。
+现价/市值/持仓盈亏/今日盈亏/收益率按同花顺 getQuotes + 当日成交重算（对齐插件 stockCalc）。
+
+排序（-s/--sort）: value(默认) day hold rate dayrate code name count
+升序加 --asc，默认降序。
+
+示例:
+  tzzb position stock -s day
+  tzzb position stock -s hold --asc
+  tzzb position stock -s dayrate`,
 	Run: func(cmd *cobra.Command, args []string) {
 		accounts := mustLoadAccounts()
 		rows := collectRows(accounts, filterAccount, "stock")
@@ -78,15 +92,18 @@ var positionStockCmd = &cobra.Command{
 			fmt.Println("暂无股票/ETF 持仓")
 			return
 		}
-		quotes := fetchQuotesForRows(rows)
-		printTotal(mergeByCode(rows), quotes)
+		ctx := loadLiveContext(accounts, rows)
+		printTotal(mergeByCode(rows), ctx)
 	},
 }
 
 var positionFundCmd = &cobra.Command{
 	Use:   "fund",
 	Short: "场外基金持仓（跨账户汇总）",
-	Long:  `只看基金账户，按代码跨账户合并。场外基金无实时今日盈亏（盘后净值）。`,
+	Long: `只看基金账户，按代码跨账户合并。场外基金无实时今日盈亏（盘后净值）。
+
+排序（-s/--sort）: value(默认) hold rate code name count
+升序加 --asc。`,
 	Run: func(cmd *cobra.Command, args []string) {
 		accounts := mustLoadAccounts()
 		rows := collectRows(accounts, filterAccount, "fund")
@@ -166,9 +183,22 @@ func matchType(category, typeFilter string) bool {
 	}
 }
 
-func fetchQuotesForRows(rows []posRow) map[string]api.Quote {
-	// 只对股票/ETF（有 market 或非基金账户）拉行情；基金账户行通常无实时价
-	var symbols []string
+// liveContext 插件同源实时上下文：getQuotes + 各账户当日成交。
+type liveContext struct {
+	quotes map[string]api.Quote            // code → quote
+	trades map[string][]api.DayTrade       // accountName → trades
+	byCode map[string][]api.DayTrade       // code → 跨账户合并成交（total/stock 用）
+}
+
+func loadLiveContext(accounts []api.Account, rows []posRow) *liveContext {
+	ctx := &liveContext{
+		quotes: map[string]api.Quote{},
+		trades: map[string][]api.DayTrade{},
+		byCode: map[string][]api.DayTrade{},
+	}
+	// 行情
+	var refs []api.QuoteRef
+	seenRef := map[string]bool{}
 	for _, r := range rows {
 		if r.Category == "fund" {
 			continue
@@ -177,51 +207,95 @@ func fetchQuotesForRows(rows []posRow) map[string]api.Quote {
 		if code == "" {
 			continue
 		}
-		symbols = append(symbols, api.SinaSymbol(code, r.Market))
+		mkt := api.GuessMarket(code, r.Market)
+		key := mkt + ":" + code
+		if seenRef[key] {
+			continue
+		}
+		seenRef[key] = true
+		refs = append(refs, api.QuoteRef{Code: code, Market: mkt})
 	}
-	if len(symbols) == 0 {
-		return nil
-	}
-	quotes, err := api.FetchQuotes(symbols)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "获取实时行情失败（今日盈亏将显示 -）: %v\n", err)
-		return nil
-	}
-	return quotes
-}
-
-func dayProfitOf(code string, count float64, quotes map[string]api.Quote) (float64, bool) {
-	if quotes == nil {
-		return 0, false
-	}
-	q, ok := quotes[normalizeCode(code)]
-	if !ok || q.PrevClose == 0 {
-		return 0, false
-	}
-	return q.DayProfit(count), true
-}
-
-func dayRateOf(code string, quotes map[string]api.Quote) (float64, bool) {
-	if quotes == nil {
-		return 0, false
-	}
-	q, ok := quotes[normalizeCode(code)]
-	if !ok || q.PrevClose == 0 {
-		return 0, false
-	}
-	return q.DayRate() * 100, true
-}
-
-func livePriceOf(code string, fallback float64, quotes map[string]api.Quote) float64 {
-	if quotes != nil {
-		if q, ok := quotes[normalizeCode(code)]; ok && q.Price > 0 {
-			return q.Price
+	if len(refs) > 0 {
+		q, err := apiClient.GetQuotes(refs)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "获取实时行情失败（今日盈亏将显示 -）: %v\n", err)
+		} else {
+			ctx.quotes = q
 		}
 	}
-	return fallback
+	// 当日成交：只拉 rows 里出现过的非基金账户
+	needAcc := map[string]bool{}
+	for _, r := range rows {
+		if r.Category != "fund" {
+			needAcc[r.Account] = true
+		}
+	}
+	for _, acc := range accounts {
+		name := acc.Name()
+		if !needAcc[name] || acc.Category == "fund" {
+			continue
+		}
+		ts, err := apiClient.GetDayTrades(acc)
+		if err != nil {
+			// 单个账户失败不阻断
+			continue
+		}
+		ctx.trades[name] = ts
+		for _, t := range ts {
+			ctx.byCode[t.Code] = append(ctx.byCode[t.Code], t)
+		}
+	}
+	return ctx
 }
 
-func printByAccount(rows []posRow, quotes map[string]api.Quote) {
+func quoteOf(ctx *liveContext, code string) *api.Quote {
+	if ctx == nil || ctx.quotes == nil {
+		return nil
+	}
+	q, ok := ctx.quotes[normalizeCode(code)]
+	if !ok {
+		return nil
+	}
+	return &q
+}
+
+func recomputePos(r posRow, ctx *liveContext) api.LiveView {
+	var trades []api.DayTrade
+	if ctx != nil && r.Category != "fund" {
+		for _, t := range ctx.trades[r.Account] {
+			if t.Code == normalizeCode(r.Code) {
+				trades = append(trades, t)
+			}
+		}
+	}
+	q := quoteOf(ctx, r.Code)
+	if r.Category == "fund" {
+		q = nil
+		trades = nil
+	}
+	return api.RecomputeLive(
+		r.Count.F(), r.Cost.F(), r.Price.F(), r.Value.F(),
+		r.HoldProfit.F(), r.HoldRate.F(), q, trades,
+	)
+}
+
+func recomputeMerged(m mergedPos, ctx *liveContext) api.LiveView {
+	apiHoldRate := 0.0
+	costBasis := m.Cost * m.Count
+	if costBasis > 0 {
+		apiHoldRate = m.HoldProfit / costBasis
+	}
+	var trades []api.DayTrade
+	if ctx != nil {
+		trades = ctx.byCode[normalizeCode(m.Code)]
+	}
+	return api.RecomputeLive(
+		m.Count, m.Cost, m.Price, m.Value, m.HoldProfit, apiHoldRate,
+		quoteOf(ctx, m.Code), trades,
+	)
+}
+
+func printByAccount(rows []posRow, ctx *liveContext) {
 	var order []string
 	groups := map[string][]posRow{}
 	catOf := map[string]string{}
@@ -233,14 +307,15 @@ func printByAccount(rows []posRow, quotes map[string]api.Quote) {
 		groups[r.Account] = append(groups[r.Account], r)
 	}
 
-	showDay := quotes != nil
+	showDay := ctx != nil && len(ctx.quotes) > 0
 	var grandValue, grandProfit, grandDay float64
 	var hasDay bool
 	for _, name := range order {
 		list := groups[name]
 		fmt.Printf("\n【%s · %s】\n", name, api.CategoryLabel(catOf[name]))
 		table := tablewriter.NewWriter(os.Stdout)
-		if showDay && catOf[name] != "fund" {
+		useLive := showDay && catOf[name] != "fund"
+		if useLive {
 			table.SetHeader([]string{"代码", "名称", "持仓量", "成本价", "现价", "市值", "持仓盈亏", "今日盈亏", "今日涨幅", "收益率"})
 		} else {
 			table.SetHeader([]string{"代码", "名称", "持仓量", "成本价", "现价", "市值", "持仓盈亏", "本周盈亏", "收益率"})
@@ -250,29 +325,30 @@ func printByAccount(rows []posRow, quotes map[string]api.Quote) {
 		var subValue, subProfit, subDay float64
 		var subHasDay bool
 		for _, r := range list {
-			subValue += r.Value.F()
-			subProfit += r.HoldProfit.F()
-			if showDay && catOf[name] != "fund" {
-				day, ok := dayProfitOf(r.Code, r.Count.F(), quotes)
-				rate, _ := dayRateOf(r.Code, quotes)
-				if ok {
-					subDay += day
+			if useLive {
+				lv := recomputePos(r, ctx)
+				subValue += lv.Value
+				subProfit += lv.HoldProfit
+				if lv.DayOK {
+					subDay += lv.DayProfit
 					subHasDay = true
 				}
-				price := livePriceOf(r.Code, r.Price.F(), quotes)
 				table.Append([]string{
 					r.Code, r.Name,
 					fmt.Sprintf("%.0f", r.Count.F()),
 					priceStr(r.Cost.F()),
-					priceStr(price),
-					fmt.Sprintf("%.2f", r.Value.F()),
-					colorNum(r.HoldProfit.F()),
-					dayStr(day, ok),
-					rateStr(rate, ok),
-					colorPct(r.HoldRate.F() * 100),
+					priceStr(lv.Price),
+					fmt.Sprintf("%.2f", lv.Value),
+					colorNum(lv.HoldProfit),
+					dayStr(lv.DayProfit, lv.DayOK),
+					rateStr(lv.DayRate, lv.DayOK),
+					colorPct(lv.HoldRate),
 				})
 			} else {
-				table.Append(posCells(r.Position, quotes))
+				lv := recomputePos(r, nil)
+				subValue += lv.Value
+				subProfit += lv.HoldProfit
+				table.Append(posCells(r, nil))
 			}
 		}
 		table.Render()
@@ -301,12 +377,24 @@ func printByAccount(rows []posRow, quotes map[string]api.Quote) {
 	}
 }
 
-func printFlat(rows []posRow, quotes map[string]api.Quote) {
-	sort.Slice(rows, func(i, j int) bool {
-		return rows[i].Value.F() > rows[j].Value.F()
+func printFlat(rows []posRow, ctx *liveContext) {
+	type flatView struct {
+		r  posRow
+		lv api.LiveView
+	}
+	views := make([]flatView, 0, len(rows))
+	for _, r := range rows {
+		c := ctx
+		if r.Category == "fund" {
+			c = nil
+		}
+		views = append(views, flatView{r: r, lv: recomputePos(r, c)})
+	}
+	sort.Slice(views, func(i, j int) bool {
+		return views[i].lv.Value > views[j].lv.Value
 	})
 
-	showDay := quotes != nil
+	showDay := ctx != nil && len(ctx.quotes) > 0
 	table := tablewriter.NewWriter(os.Stdout)
 	if showDay {
 		table.SetHeader([]string{"账户", "类型", "代码", "名称", "持仓量", "成本价", "现价", "市值", "持仓盈亏", "今日盈亏", "今日涨幅", "收益率"})
@@ -317,32 +405,30 @@ func printFlat(rows []posRow, quotes map[string]api.Quote) {
 
 	var totalValue, totalProfit, totalDay float64
 	var hasDay bool
-	for _, r := range rows {
-		totalValue += r.Value.F()
-		totalProfit += r.HoldProfit.F()
+	for _, v := range views {
+		r, lv := v.r, v.lv
+		totalValue += lv.Value
+		totalProfit += lv.HoldProfit
 		if showDay && r.Category != "fund" {
-			day, ok := dayProfitOf(r.Code, r.Count.F(), quotes)
-			rate, _ := dayRateOf(r.Code, quotes)
-			if ok {
-				totalDay += day
+			if lv.DayOK {
+				totalDay += lv.DayProfit
 				hasDay = true
 			}
-			price := livePriceOf(r.Code, r.Price.F(), quotes)
 			table.Append([]string{
 				r.Account, api.CategoryLabel(r.Category),
 				r.Code, r.Name,
 				fmt.Sprintf("%.0f", r.Count.F()),
 				priceStr(r.Cost.F()),
-				priceStr(price),
-				fmt.Sprintf("%.2f", r.Value.F()),
-				colorNum(r.HoldProfit.F()),
-				dayStr(day, ok),
-				rateStr(rate, ok),
-				colorPct(r.HoldRate.F() * 100),
+				priceStr(lv.Price),
+				fmt.Sprintf("%.2f", lv.Value),
+				colorNum(lv.HoldProfit),
+				dayStr(lv.DayProfit, lv.DayOK),
+				rateStr(lv.DayRate, lv.DayOK),
+				colorPct(lv.HoldRate),
 			})
 		} else {
 			cells := []string{r.Account, api.CategoryLabel(r.Category)}
-			cells = append(cells, posCells(r.Position, quotes)...)
+			cells = append(cells, posCells(r, nil)...)
 			table.Append(cells)
 		}
 	}
@@ -358,50 +444,94 @@ func printFlat(rows []posRow, quotes map[string]api.Quote) {
 	}
 }
 
-func printTotal(merged []mergedPos, quotes map[string]api.Quote) {
-	sort.Slice(merged, func(i, j int) bool {
-		return merged[i].Value > merged[j].Value
-	})
+// totalRowView 汇总表一行（含排序用的派生字段，已按插件口径重算）。
+type totalRowView struct {
+	m       mergedPos
+	lv      api.LiveView
+	price   float64
+	day     float64
+	dayOK   bool
+	dayRate float64
+	rateOK  bool
+	rate    float64
+	value   float64
+	hold    float64
+}
 
-	showDay := quotes != nil
-	table := tablewriter.NewWriter(os.Stdout)
-	if showDay {
-		table.SetHeader([]string{"代码", "名称", "总数量", "均成本", "现价", "总市值", "持仓盈亏", "今日盈亏", "今日涨幅", "收益率", "账户"})
-	} else {
-		table.SetHeader([]string{"代码", "名称", "总数量", "均成本", "现价", "总市值", "持仓盈亏", "收益率", "账户"})
-	}
-	table.SetBorder(true)
-
-	var totalValue, totalProfit, totalDay float64
+func printTotal(merged []mergedPos, ctx *liveContext) {
+	views := make([]totalRowView, 0, len(merged))
+	var totalValue, totalProfit, totalDay, totalCount, totalCostBasis, totalSell float64
 	var hasDay bool
 	for _, m := range merged {
-		totalValue += m.Value
-		totalProfit += m.HoldProfit
-		rate := 0.0
-		costBasis := m.Value - m.HoldProfit
-		if costBasis > 0 {
-			rate = m.HoldProfit / costBasis * 100
+		lv := recomputeMerged(m, ctx)
+		totalValue += lv.Value
+		totalProfit += lv.HoldProfit
+		totalCount += m.Count
+		totalCostBasis += m.Cost * m.Count
+		totalSell += lv.SellAmount
+		if lv.DayOK {
+			totalDay += lv.DayProfit
+			hasDay = true
 		}
-		price := livePriceOf(m.Code, m.Price, quotes)
+		// 行内「今日涨幅」= 价格涨跌幅；有昨收即可显示（含 0.00%）
+		rateOK := false
+		if q := quoteOf(ctx, m.Code); q != nil && q.PrevClose > 0 && lv.Price > 0 {
+			rateOK = true
+		}
+		views = append(views, totalRowView{
+			m: m, lv: lv,
+			price: lv.Price, day: lv.DayProfit, dayOK: lv.DayOK,
+			dayRate: lv.DayRate, rateOK: rateOK,
+			rate: lv.HoldRate, value: lv.Value, hold: lv.HoldProfit,
+		})
+	}
 
+	sortTotalViews(views)
+
+	// 合计「收益率」= 总持仓盈亏 / 总成本
+	totalRate := 0.0
+	if totalCostBasis != 0 {
+		totalRate = totalProfit / totalCostBasis * 100
+	}
+	// 合计行「今日涨幅」= 组合持仓当日盈亏比（相对总市值，非账户总资产）：
+	//   总今日盈亏 / (总市值 − 总今日盈亏 + 总卖出额)
+	// 与单票 drykb 同一套分母；现金不摊薄。账本 now_rate 用总资产，口径不同。
+	totalDayRate := 0.0
+	totalDayRateOK := false
+	if hasDay {
+		den := totalValue - totalDay + totalSell
+		if den != 0 {
+			totalDayRate = totalDay / den * 100
+			totalDayRateOK = true
+		}
+	}
+
+	showDay := ctx != nil && len(ctx.quotes) > 0
+	table := tablewriter.NewWriter(os.Stdout)
+	if showDay {
+		table.SetHeader([]string{"代码", "名称", "总数量", "均成本", "现价", "总市值", "占比", "持仓盈亏", "今日盈亏", "今日涨幅", "收益率", "账户"})
+	} else {
+		table.SetHeader([]string{"代码", "名称", "总数量", "均成本", "现价", "总市值", "占比", "持仓盈亏", "收益率", "账户"})
+	}
+	table.SetBorder(true)
+	table.SetRowLine(false)
+
+	for _, v := range views {
+		m := v.m
+		weight := weightStr(v.value, totalValue)
 		if showDay {
-			day, ok := dayProfitOf(m.Code, m.Count, quotes)
-			dayRate, rateOK := dayRateOf(m.Code, quotes)
-			if ok {
-				totalDay += day
-				hasDay = true
-			}
 			table.Append([]string{
 				m.Code,
 				m.Name,
 				fmt.Sprintf("%.0f", m.Count),
 				priceStr(m.Cost),
-				priceStr(price),
-				fmt.Sprintf("%.2f", m.Value),
-				colorNum(m.HoldProfit),
-				dayStr(day, ok),
-				rateStr(dayRate, rateOK),
-				colorPct(rate),
+				priceStr(v.price),
+				fmt.Sprintf("%.2f", v.value),
+				weight,
+				colorNum(v.hold),
+				dayStr(v.day, v.dayOK),
+				rateStr(v.dayRate, v.rateOK),
+				colorPct(v.rate),
 				strings.Join(m.Accounts, ","),
 			})
 		} else {
@@ -410,23 +540,142 @@ func printTotal(merged []mergedPos, quotes map[string]api.Quote) {
 				m.Name,
 				fmt.Sprintf("%.0f", m.Count),
 				priceStr(m.Cost),
-				priceStr(price),
-				fmt.Sprintf("%.2f", m.Value),
-				colorNum(m.HoldProfit),
-				colorPct(rate),
+				priceStr(v.price),
+				fmt.Sprintf("%.2f", v.value),
+				weight,
+				colorNum(v.hold),
+				colorPct(v.rate),
 				strings.Join(m.Accounts, ","),
 			})
 		}
 	}
-	table.Render()
 
-	fmt.Println()
-	if hasDay {
-		color.New(color.Bold).Printf("合计  市值: %.2f | 持仓盈亏: %s | 今日盈亏: %s | 标的: %d\n",
-			totalValue, colorNum(totalProfit), colorNum(totalDay), len(merged))
+	if showDay {
+		table.Append([]string{
+			"合计",
+			fmt.Sprintf("%d只", len(merged)),
+			fmt.Sprintf("%.0f", totalCount),
+			"-",
+			"-",
+			fmt.Sprintf("%.2f", totalValue),
+			weightStr(totalValue, totalValue),
+			colorNum(totalProfit),
+			dayStr(totalDay, hasDay),
+			rateStr(totalDayRate, totalDayRateOK),
+			colorPct(totalRate),
+			"",
+		})
 	} else {
-		color.New(color.Bold).Printf("合计  市值: %.2f | 持仓盈亏: %s | 标的: %d\n",
-			totalValue, colorNum(totalProfit), len(merged))
+		table.Append([]string{
+			"合计",
+			fmt.Sprintf("%d只", len(merged)),
+			fmt.Sprintf("%.0f", totalCount),
+			"-",
+			"-",
+			fmt.Sprintf("%.2f", totalValue),
+			weightStr(totalValue, totalValue),
+			colorNum(totalProfit),
+			colorPct(totalRate),
+			"",
+		})
+	}
+	table.Render()
+}
+
+// weightStr 市值占本表合计总市值的比例（position stock/total/fund 共用）。
+func weightStr(value, total float64) string {
+	if total == 0 {
+		return "-"
+	}
+	return fmt.Sprintf("%.1f%%", value/total*100)
+}
+
+// sortTotalViews 按 -s/--sort 与 --asc 排序。
+// 数值字段默认降序；code/name 默认升序。--asc 强制升序。
+func sortTotalViews(views []totalRowView) {
+	key := normalizeSortKey(sortBy)
+	desc := !sortAsc
+	if !sortAsc && (key == "code" || key == "name") {
+		desc = false // 代码/名称默认升序
+	}
+
+	sort.SliceStable(views, func(i, j int) bool {
+		a, b := views[i], views[j]
+		// 无行情的 day/dayrate 始终沉底
+		if key == "day" && a.dayOK != b.dayOK {
+			return a.dayOK
+		}
+		if key == "dayrate" && a.rateOK != b.rateOK {
+			return a.rateOK
+		}
+		cmp := cmpTotalView(a, b, key)
+		if desc {
+			return cmp > 0
+		}
+		return cmp < 0
+	})
+}
+
+func normalizeSortKey(raw string) string {
+	key := strings.ToLower(strings.TrimSpace(raw))
+	if key == "" {
+		return "value"
+	}
+	switch key {
+	case "market", "sz", "市值", "总市值":
+		return "value"
+	case "today", "dayprofit", "今日", "今日盈亏", "dryk":
+		return "day"
+	case "profit", "holdprofit", "持仓", "持仓盈亏", "ccyk":
+		return "hold"
+	case "return", "holdrate", "收益率":
+		return "rate"
+	case "zdf", "pct", "今日涨幅", "涨幅":
+		return "dayrate"
+	case "qty", "数量", "总数量":
+		return "count"
+	case "代码":
+		return "code"
+	case "名称":
+		return "name"
+	case "value", "day", "hold", "rate", "dayrate", "code", "name", "count":
+		return key
+	default:
+		fmt.Fprintf(os.Stderr, "未知排序字段 %q，支持: value day hold rate dayrate code name count\n", raw)
+		os.Exit(1)
+		return "value"
+	}
+}
+
+// cmpTotalView: -1 if a<b, 1 if a>b, 0 if equal (on the sort key).
+// 市值/持仓盈亏用实时重算后的 value/hold，与展示一致。
+func cmpTotalView(a, b totalRowView, key string) int {
+	var av, bv float64
+	switch key {
+	case "value":
+		av, bv = a.value, b.value
+	case "day":
+		av, bv = a.day, b.day
+	case "hold":
+		av, bv = a.hold, b.hold
+	case "rate":
+		av, bv = a.rate, b.rate
+	case "dayrate":
+		av, bv = a.dayRate, b.dayRate
+	case "count":
+		av, bv = a.m.Count, b.m.Count
+	case "code":
+		return strings.Compare(a.m.Code, b.m.Code)
+	case "name":
+		return strings.Compare(a.m.Name, b.m.Name)
+	}
+	switch {
+	case av < bv:
+		return -1
+	case av > bv:
+		return 1
+	default:
+		return 0
 	}
 }
 
@@ -501,18 +750,19 @@ func normalizeCode(code string) string {
 	return code
 }
 
-func posCells(p api.Position, quotes map[string]api.Quote) []string {
-	price := livePriceOf(p.Code, p.Price.F(), quotes)
+// posCells 基金/无行情行：不展示今日盈亏列，用接口值（本周盈亏列）。
+func posCells(r posRow, ctx *liveContext) []string {
+	lv := recomputePos(r, ctx)
 	return []string{
-		p.Code,
-		p.Name,
-		fmt.Sprintf("%.0f", p.Count.F()),
-		priceStr(p.Cost.F()),
-		priceStr(price),
-		fmt.Sprintf("%.2f", p.Value.F()),
-		colorNum(p.HoldProfit.F()),
-		colorNum(p.WProfit.F()),
-		colorPct(p.HoldRate.F() * 100),
+		r.Code,
+		r.Name,
+		fmt.Sprintf("%.0f", r.Count.F()),
+		priceStr(r.Cost.F()),
+		priceStr(lv.Price),
+		fmt.Sprintf("%.2f", lv.Value),
+		colorNum(lv.HoldProfit),
+		colorNum(r.WProfit.F()),
+		colorPct(lv.HoldRate),
 	}
 }
 
@@ -557,6 +807,9 @@ func init() {
 
 	for _, c := range []*cobra.Command{positionTotalCmd, positionStockCmd, positionFundCmd} {
 		c.Flags().StringVarP(&filterAccount, "account", "a", "", "按账户名过滤（模糊匹配）")
+		c.Flags().StringVarP(&sortBy, "sort", "s", "value",
+			"排序字段: value(市值) day(今日盈亏) hold(持仓盈亏) rate(收益率) dayrate(今日涨幅) code name count")
+		c.Flags().BoolVar(&sortAsc, "asc", false, "升序（默认数值降序，code/name 升序）")
 	}
 	positionTotalCmd.Flags().StringVarP(&filterType, "type", "t", "all", "类型: all / stock / fund")
 }

@@ -213,10 +213,163 @@ stock 和 fund 的持仓行字段高度一致，本 CLI 的 `Position` 只取通
 
 ### 3.6 get_money_history — 资金/交易流水
 
-- **path**: `/caishen_fund/pc/account/v1/get_money_history`
-- **参数**: `manual_id` / `fundid` / `fund_key`（有哪个传哪个）
-- **状态**: **结构尚未完全确认**。CLI 用 `extractRecords` 做兜底解析（兼容"顶层是数组"或"顶层对象里嵌一个数组"两种形态），返回 `[]map[string]any`。
-- 后续要做严格类型，需要先抓真实响应确认字段。
+- **path**: `/caishen_fund/pc/account/v1/get_money_history`（PC 前端现多用 v2；CLI 固定 **v1**，v2 易繁忙）
+- **踩坑**: 账户相关键即使为空串也必须出现在 form 里，否则 Spring **HTTP 400**。
+- **参数**（与 PC `queryAccountHistory` 对齐）:
+
+| 字段 | 说明 |
+|---|---|
+| `manual_id` / `fund_key` / `rzrq_fund_key` / `fundid` / `custid` | 账户标识，没有则传 `""` |
+| `start_date` / `end_date` | `YYYY-MM-DD`，CLI 默认近 3 个月 |
+| `page` / `count` | 分页，CLI `count=100`，`page` 从 1 递增 |
+| `query_list` / `sort_type` / `sort_order` / `h5id` | 可空；`sort_order=0`；`h5id` 首请求 `"0"`，之后用上一页返回值 |
+
+---
+
+### 3.6.1 trade 记录解析方法（核心）
+
+trade 没有独立 struct。一条流水始终是 `map[string]any`，从 HTTP body 到表格/汇总分 **5 步**。
+
+实现位置：
+
+| 步骤 | 函数 | 文件 |
+|---|---|---|
+| 1 请求+信封 | `post` → `call` | `pkg/api/client.go` |
+| 2 单页解析 | `parseMoneyHistoryPage` / `extractRecords` | 同上 |
+| 3 自动翻页拼全量 | `GetMoneyHistory` | 同上 |
+| 4 明细列映射 | `renderRecords` / `pickField` | `cmd/trade.go` |
+| 5 买卖归类汇总 | `tradeAgg.add` / `mapFloat` | 同上 |
+
+#### 步骤 1：HTTP → `ex_data`
+
+```
+POST form body
+  → post() 读原始 JSON
+  → call() 解 envelope{error_code, error_msg, ex_data}
+  → error_code 必须为 "0"，否则报错
+  → 返回 ex_data (json.RawMessage)
+```
+
+公共参数 `terminal/version/userid/user_id` 与接口参数一并 `form.Set`；**空串不丢弃**。
+
+#### 步骤 2：`ex_data` → 单页 `moneyHistoryPage`
+
+结构体：
+
+```go
+type moneyHistoryPage struct {
+    List    []map[string]any `json:"list"`     // 本页流水
+    Page    Num              `json:"page"`
+    MaxPage Num              `json:"max_page"` // 总页数
+    Count   Num              `json:"count"`
+    Total   Num              `json:"total"`    // 总条数
+    H5ID    string           `json:"h5id"`     // 翻页游标
+}
+```
+
+`parseMoneyHistoryPage(ex)` 顺序：
+
+1. `ex` 为空 / `"null"` → 空页。
+2. `json.Unmarshal` 进 `moneyHistoryPage`；若 `list != nil` **或** `max_page != 0` **或** `total != 0` → 采用（`list` 为 nil 时置 `[]`）。
+3. 否则走兼容路径 `extractRecords(ex)`：
+   1. 有 `{"list":[...]}` → 用 `list`
+   2. 顶层就是数组 `[...]` → 直接用
+   3. 对象里再试键：`list` / `data` / `stock` / `records` / `history`
+
+单条记录**不**再 unmarshal 成强类型；保持 `map[string]any`，避免接口加字段就挂。
+
+#### 步骤 3：多页拼接 → 全量 `[]map[string]any`
+
+`GetMoneyHistory(acc)`：
+
+```
+start = today-3m, end = today
+h5id = "0"
+all = []
+for page = 1 .. 20:
+    请求参数 = 账户键 + 日期 + count=100 + page + h5id
+    ex = call(v1/get_money_history, 参数)
+    pg = parseMoneyHistoryPage(ex)
+    if pg.H5ID != "" { h5id = pg.H5ID }   // 下一页游标
+    all = append(all, pg.List...)
+    结束条件:
+      - max_page > 0 且 page >= max_page
+      - list 为空
+      - 无 max_page 且本页 len(list) < 100
+return all
+```
+
+到这里，CLI 手里是「该账户近 3 个月全部流水 map」。
+
+#### 步骤 4：单条 map → 明细表列（`trade list`）
+
+`renderRecords` **不读全字段**，只按固定中文列从候选键里取第一个非空值：
+
+| 展示列 | 解析键顺序（`pickField`） |
+|---|---|
+| 日期 | `entry_date` → `date` |
+| 时间 | `entry_time` → `time` |
+| 类型 | `op_name` → `type` → `op` |
+| 代码 | `code` |
+| 名称 | `name` |
+| 数量 | `entry_count` → `count` |
+| 价格 | `entry_price` → `price` |
+| 金额 | `entry_money` → `amount` → `money` |
+| 费用 | `fee` → `commission` |
+
+规则：
+
+- 某列在**本批记录**里所有候选键都无值 → 该列不显示。
+- 全部列都空 → 回退「所有 key 并集 + 字母序」动态表；key 以 `_` 开头的内部字段跳过。
+- 单元格：`fmt.Sprintf("%v", v)`，空 / `"<nil>"` 当无值。
+
+实测国* / 华宝走固定列即可，常见原始字段即上表左侧 API 名。
+
+#### 步骤 5：单条 map → 买卖汇总语义（`trade summary`）
+
+`tradeAgg.add(r)` 从 map 抽数并归类：
+
+```
+op    = trim(string(r["op_name"]))
+money = mapFloat(r, "entry_money")
+cnt   = mapFloat(r, "entry_count")
+fee   = mapFloat(r, "fee"); 若 0 再 mapFloat(r, "commission")
+fee 始终累加
+
+if op 含 "银行":
+    otherN++; return          // 银证转账：不进买卖
+
+if op 含 "买" 或 op ∈ {转入, 担保品转入}:
+    buyAmt += money; buyCnt += cnt; buyN++
+elif op 含 "卖" 或 op ∈ {转出, 担保品转出}:
+    sellAmt += money; sellCnt += cnt; sellN++
+else:
+    otherN++
+
+name 取第一条非空 r["name"]
+净流入 = sellAmt - buyAmt
+```
+
+`mapFloat` 解析顺序：`float64` / `float32` / `int` / `int64` / `json.Number` / 去逗号后的数字字符串；失败当 0。
+
+汇总维度（在已解析的全量 records 上再聚合，**不再请求接口**）：
+
+1. **按账户**：每个账户自己的 records 跑一遍 `tradeAgg`。
+2. **按代码**：`code` 为空 → `"(无代码)"`；只输出有买卖笔的代码；按 `buyAmt+sellAmt` 降序，Top 40。
+3. **总汇总**：全部 records 一个 `tradeAgg`。
+
+summary 跨账户时会在 map 上临时写 `_account`（仅内存；步骤 4 动态表会跳过 `_` 前缀）。
+
+#### 解析口径注意点
+
+| 点 | 说明 |
+|---|---|
+| 无强类型 Trade 结构体 | 全程 `map[string]any`，字段名以接口为准 |
+| 分类主键是中文 `op_name` | 用 `Contains("买"/"卖"/"银行")`，不是枚举 code |
+| 逆回购算买卖 | `204001`/`131810` 等 op 仍是买入/卖出，会撑大区间买卖总额 |
+| 净流入 | 卖出金额 − 买入金额；负 = 净投入 |
+| 费用 | 每条都加，与买卖/银证归类独立 |
+| 分页上限 | 最多 20 页 × 100 = 2000 条/账户 |
 
 ### 3.7 其它已知但未接入的接口
 
@@ -259,13 +412,15 @@ cmd/root.go             根命令，注册子命令，初始化 apiClient
 cmd/login.go            login：三种方式传 Cookie
 cmd/account.go          account list：账户列表 + 汇总，含 colorNum 工具
 cmd/position.go         position list：持仓明细，含 colorPct 工具
-cmd/trade.go            trade list：资金流水（依赖 get_money_history）
+cmd/trade.go            trade list / trade summary；解析见 §3.6.1
 cmd/profit.go           profit summary：收益汇总
 cmd/export.go           export account/position：CSV/JSON 导出
 docs/API.md             本文档
 ```
 
 用 cobra 搭命令，fatih/color 上色，olekukonko/tablewriter 出表格。
+
+**trade 记录怎么解析**：见 **§3.6.1**（`call` → `parseMoneyHistoryPage` → 翻页拼接 → `renderRecords` / `tradeAgg.add`）。
 
 ### 4.2 请求流水线（client.go）
 
@@ -314,6 +469,28 @@ post(path, params)           拼公共参数 → 表单编码 → 加 4 个必�
 
 - **市值 / 持仓盈亏**：按行累加，与顶层 `total_value` 一致，**不要去重**。
 - **`w_profit`（本周）**：同 code 多行常是同一值，**不能**按行直接加总当账户周收益；账户级当日/持仓盈亏一律信 card。
+
+### 4.5 持仓展示：实时重算（对齐插件，同源）
+
+插件链路（**不要用新浪**）：
+
+1. `stock_position` 持仓数量/成本/接口价/接口 hold_profit  
+2. **`/caishen_fund/invest/getQuotes`**（插件 `requestPriceInfo`，参数 `code=market:code,...`）拿 `xianjia`/`zuoshou`  
+3. **`/caishen_fund/pc/account/v1/merge_day_trading`** 当日成交（`czdm` 1买/2卖/0速记/235转入/236转出）  
+4. 本地 `RecomputeLive`（`pkg/api/client.go`）按插件 `stockCalc` 重算  
+
+| 字段 | 公式 |
+|---|---|
+| 现价 | getQuotes.xianjia；无行情回落接口 `price` |
+| 市值 | `数量 × 现价` |
+| 今日盈亏 | 当日买卖收益 + `(现价−昨收)×(持仓−今日买入−正 remainchg) − 费用 + 速记`（插件 dryk） |
+| 今日涨幅 | `(现价 − 昨收) / 昨收`（插件 **涨幅 zf**；不是当日盈亏比） |
+| 单票当日盈亏比 | `今日盈亏 / (市值 − 今日盈亏 + 卖出金额)`（插件 drykb） |
+| **合计今日涨幅** | `总今日盈亏 / (总市值 − 总今日盈亏 + 总卖出额)`（持仓口径，与单票 drykb 一致；**不是**账本/card 的总资产 `now_rate`） |
+| 持仓盈亏 | `接口 hold_profit + (现价 − 接口价) × 数量`（auto 账户） |
+| 收益率 | `持仓盈亏 / (成本价 × 数量)`（插件 浮动盈亏比） |
+
+`account list` 账户级数字仍走 card（`now_profit`/`profit`/`asset`）。
 
 ---
 

@@ -32,7 +32,7 @@ func init() {
 	// 全局 --json 标志
 	rootCmd.PersistentFlags().BoolVarP(&outputJSON, "json", "j", false, "以 JSON 格式输出")
 	// 全局 --no-color 标志
-	rootCmd.PersistentFlags().BoolVar(&noColor, "no-color", false, "禁用颜色输出")
+	rootCmd.PersistentFlags().BoolVarP(&noColor, "no-color", "n", false, "禁用颜色输出")
 
 	rootCmd.AddCommand(loginCmd)
 	rootCmd.AddCommand(accountCmd)

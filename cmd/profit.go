@@ -3,10 +3,8 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"sort"
 
 	"github.com/fatih/color"
-	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 
 	"github.com/liyanran/tzzb-cli/internal/formatter"
@@ -23,7 +21,8 @@ var profitSummaryCmd = &cobra.Command{
 	Use:   "summary",
 	Short: "收益汇总",
 	Run: func(cmd *cobra.Command, args []string) {
-		accounts, err := apiClient.GetAccountList()
+		// 获取账户列表
+		accounts, err := accountService.GetAccountList()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "获取收益数据失败: %v\n", err)
 			os.Exit(1)
@@ -38,10 +37,11 @@ var profitSummaryCmd = &cobra.Command{
 			return
 		}
 
-		// 按总盈亏从高到低排序，方便一眼看出贡献
-		sort.Slice(accounts, func(i, j int) bool {
-			return accounts[i].TotalProfit.F() > accounts[j].TotalProfit.F()
-		})
+		// 按总盈亏从高到低排序
+		accountService.SortByTotalProfit(accounts)
+
+		// 计算汇总
+		summary := accountService.CalculateSummary(accounts)
 
 		// JSON 输出
 		if outputJSON {
@@ -56,95 +56,59 @@ var profitSummaryCmd = &cobra.Command{
 				TotalRate    float64 `json:"total_rate"`
 			}
 			var result []ProfitJSON
-			var totalPrincipal, totalAssets, totalHold, totalToday, totalProfit float64
 
 			for _, acc := range accounts {
-				principal := acc.Principal.F()
-				totalPrincipal += principal
-				totalAssets += acc.TotalAssets.F()
-				totalHold += acc.HoldProfit.F()
-				totalToday += acc.TodayProfit.F()
-				totalProfit += acc.TotalProfit.F()
-
-				rate := 0.0
-				if principal > 0 {
-					rate = acc.TotalProfit.F() / principal * 100
-				}
-
 				result = append(result, ProfitJSON{
 					Account:     acc.Name(),
 					Category:    api.CategoryLabel(acc.Category),
-					Principal:   principal,
+					Principal:   acc.Principal.F(),
 					TotalAssets: acc.TotalAssets.F(),
 					HoldProfit:  acc.HoldProfit.F(),
 					TodayProfit: acc.TodayProfit.F(),
 					TotalProfit: acc.TotalProfit.F(),
-					TotalRate:   rate,
+					TotalRate:   accountService.CalculateAccountRate(acc),
 				})
-			}
-
-			totalRate := 0.0
-			if totalPrincipal > 0 {
-				totalRate = totalProfit / totalPrincipal * 100
 			}
 
 			formatter.PrintJSON(map[string]any{
 				"accounts": result,
 				"summary": map[string]float64{
-					"principal":    totalPrincipal,
-					"total_assets": totalAssets,
-					"hold_profit":  totalHold,
-					"today_profit": totalToday,
-					"total_profit": totalProfit,
-					"total_rate":   totalRate,
+					"principal":    summary.TotalPrincipal,
+					"total_assets": summary.TotalAssets,
+					"hold_profit":  summary.HoldProfit,
+					"today_profit": summary.TodayProfit,
+					"total_profit": summary.TotalProfit,
+					"total_rate":   summary.TotalRate,
 				},
 			})
 			return
 		}
 
 		// 表格输出
-		table := tablewriter.NewWriter(os.Stdout)
-		table.SetHeader([]string{"账户", "类型", "本金", "总资产", "持仓盈亏", "当日盈亏", "总盈亏", "总收益率"})
-		table.SetBorder(true)
-		table.SetRowLine(true)
+		headers := []string{"账户", "类型", "本金", "总资产", "持仓盈亏", "当日盈亏", "总盈亏", "总收益率"}
+		var rows [][]string
 
-		var totalPrincipal, totalAssets, totalHold, totalToday, totalProfit float64
 		for _, acc := range accounts {
-			principal := acc.Principal.F()
-			totalPrincipal += principal
-			totalAssets += acc.TotalAssets.F()
-			totalHold += acc.HoldProfit.F()
-			totalToday += acc.TodayProfit.F()
-			totalProfit += acc.TotalProfit.F()
-
-			rate := 0.0
-			if principal > 0 {
-				rate = acc.TotalProfit.F() / principal * 100
-			}
-
-			table.Append([]string{
+			rows = append(rows, []string{
 				acc.Name(),
 				api.CategoryLabel(acc.Category),
-				fmt.Sprintf("%.2f", principal),
+				fmt.Sprintf("%.2f", acc.Principal.F()),
 				fmt.Sprintf("%.2f", acc.TotalAssets.F()),
 				formatter.ColorNum(acc.HoldProfit.F()),
 				formatter.ColorNum(acc.TodayProfit.F()),
 				formatter.ColorNum(acc.TotalProfit.F()),
-				formatter.ColorPct(rate),
+				formatter.ColorPct(accountService.CalculateAccountRate(acc)),
 			})
 		}
-		table.Render()
 
-		totalRate := 0.0
-		if totalPrincipal > 0 {
-			totalRate = totalProfit / totalPrincipal * 100
-		}
+		formatter.RenderTable(headers, rows, formatter.WithBorder(true), formatter.WithRowLine(true))
 
 		fmt.Println()
 		color.New(color.Bold).Printf(
 			"汇总  本金: %.2f | 总资产: %.2f | 持仓盈亏: %s | 当日盈亏: %s | 总盈亏: %s | 总收益率: %s\n",
-			totalPrincipal, totalAssets,
-			formatter.ColorNum(totalHold), formatter.ColorNum(totalToday), formatter.ColorNum(totalProfit), formatter.ColorPct(totalRate),
+			summary.TotalPrincipal, summary.TotalAssets,
+			formatter.ColorNum(summary.HoldProfit), formatter.ColorNum(summary.TodayProfit),
+			formatter.ColorNum(summary.TotalProfit), formatter.ColorPct(summary.TotalRate),
 		)
 	},
 }

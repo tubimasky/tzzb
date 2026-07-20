@@ -770,8 +770,8 @@ func (s *RenderService) GroupByAccount(rows []PositionRow) []AccountGroup {
 	return result
 }
 
-// AccountSummary 账户汇总数据
-type AccountSummary struct {
+// PositionSummary 持仓汇总数据
+type PositionSummary struct {
 	Value      float64
 	HoldProfit float64
 	DayProfit  float64
@@ -780,8 +780,8 @@ type AccountSummary struct {
 }
 
 // ComputeAccountSummary 计算账户汇总
-func (s *RenderService) ComputeAccountSummary(rows []PositionRow, ctx *LiveContext, isFund bool) AccountSummary {
-	var summary AccountSummary
+func (s *RenderService) ComputeAccountSummary(rows []PositionRow, ctx *LiveContext, isFund bool) PositionSummary {
+	var summary PositionSummary
 	summary.Count = len(rows)
 
 	for _, r := range rows {

@@ -5,12 +5,14 @@ import (
 	"os"
 
 	"github.com/fatih/color"
-	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 
 	"github.com/liyanran/tzzb-cli/internal/formatter"
+	"github.com/liyanran/tzzb-cli/internal/service"
 	"github.com/liyanran/tzzb-cli/pkg/api"
 )
+
+var accountService *service.AccountService
 
 var accountCmd = &cobra.Command{
 	Use:   "account",
@@ -22,7 +24,8 @@ var accountListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "查看账户列表",
 	Run: func(cmd *cobra.Command, args []string) {
-		accounts, err := apiClient.GetAccountList()
+		// 获取账户列表
+		accounts, err := accountService.GetAccountList()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "获取账户列表失败: %v\n", err)
 			os.Exit(1)
@@ -37,6 +40,9 @@ var accountListCmd = &cobra.Command{
 			return
 		}
 
+		// 计算汇总
+		summary := accountService.CalculateSummary(accounts)
+
 		// JSON 输出
 		if outputJSON {
 			type AccountOutput struct {
@@ -49,12 +55,7 @@ var accountListCmd = &cobra.Command{
 				PositionRate float64 `json:"position_rate"`
 			}
 			var output []AccountOutput
-			var totalAssets, totalHold, totalToday, totalProfit float64
 			for _, acc := range accounts {
-				totalAssets += acc.TotalAssets.F()
-				totalHold += acc.HoldProfit.F()
-				totalToday += acc.TodayProfit.F()
-				totalProfit += acc.TotalProfit.F()
 				output = append(output, AccountOutput{
 					Name:         acc.Name(),
 					Category:     api.CategoryLabel(acc.Category),
@@ -68,10 +69,10 @@ var accountListCmd = &cobra.Command{
 			result := map[string]any{
 				"accounts": output,
 				"summary": map[string]float64{
-					"total_assets":  totalAssets,
-					"hold_profit":   totalHold,
-					"today_profit":  totalToday,
-					"total_profit":  totalProfit,
+					"total_assets":  summary.TotalAssets,
+					"hold_profit":   summary.HoldProfit,
+					"today_profit":  summary.TodayProfit,
+					"total_profit":  summary.TotalProfit,
 				},
 			}
 			formatter.PrintJSON(result)
@@ -79,19 +80,11 @@ var accountListCmd = &cobra.Command{
 		}
 
 		// 表格输出
-		table := tablewriter.NewWriter(os.Stdout)
-		table.SetHeader([]string{"账户", "类型", "总资产", "持仓盈亏", "当日盈亏", "总盈亏", "仓位"})
-		table.SetBorder(true)
-		table.SetRowLine(true)
+		headers := []string{"账户", "类型", "总资产", "持仓盈亏", "当日盈亏", "总盈亏", "仓位"}
+		var rows [][]string
 
-		var totalAssets, totalHold, totalToday, totalProfit float64
 		for _, acc := range accounts {
-			totalAssets += acc.TotalAssets.F()
-			totalHold += acc.HoldProfit.F()
-			totalToday += acc.TodayProfit.F()
-			totalProfit += acc.TotalProfit.F()
-
-			table.Append([]string{
+			rows = append(rows, []string{
 				acc.Name(),
 				api.CategoryLabel(acc.Category),
 				fmt.Sprintf("%.2f", acc.TotalAssets.F()),
@@ -101,15 +94,18 @@ var accountListCmd = &cobra.Command{
 				fmt.Sprintf("%.1f%%", acc.PositionRate.F()*100),
 			})
 		}
-		table.Render()
+
+		formatter.RenderTable(headers, rows, formatter.WithBorder(true), formatter.WithRowLine(true))
 
 		fmt.Println()
 		bold := color.New(color.Bold)
 		bold.Printf("汇总  总资产: %.2f | 持仓盈亏: %s | 当日盈亏: %s | 总盈亏: %s\n",
-			totalAssets, formatter.ColorNum(totalHold), formatter.ColorNum(totalToday), formatter.ColorNum(totalProfit))
+			summary.TotalAssets, formatter.ColorNum(summary.HoldProfit),
+			formatter.ColorNum(summary.TodayProfit), formatter.ColorNum(summary.TotalProfit))
 	},
 }
 
 func init() {
+	accountService = service.NewAccountService(apiClient)
 	accountCmd.AddCommand(accountListCmd)
 }

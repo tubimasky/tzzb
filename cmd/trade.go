@@ -12,6 +12,7 @@ import (
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 
+	"github.com/liyanran/tzzb-cli/internal/formatter"
 	"github.com/liyanran/tzzb-cli/pkg/api"
 )
 
@@ -49,9 +50,9 @@ var tradeListCmd = &cobra.Command{
 				})
 			}
 			if len(allResults) == 0 {
-				printJSON([]any{})
+				formatter.PrintJSON([]any{})
 			} else {
-				printJSON(allResults)
+				formatter.PrintJSON(allResults)
 			}
 			return
 		}
@@ -109,7 +110,7 @@ var tradeSummaryCmd = &cobra.Command{
 		}
 		if len(all) == 0 {
 			if outputJSON {
-				printJSON(map[string]any{"error": "no trade records"})
+				formatter.PrintJSON(map[string]any{"error": "no trade records"})
 			} else {
 				fmt.Println("暂无交易记录")
 			}
@@ -224,7 +225,7 @@ func printTradeAccountSummary(packs []accPack) {
 			api.CategoryLabel(p.acc.Category),
 			fmt.Sprintf("%.2f", a.buyAmt),
 			fmt.Sprintf("%.2f", a.sellAmt),
-			colorNum(a.netBuy()),
+			formatter.ColorNum(a.netBuy()),
 			strconv.Itoa(a.buyN),
 			strconv.Itoa(a.sellN),
 			strconv.Itoa(a.otherN),
@@ -237,7 +238,7 @@ func printTradeAccountSummary(packs []accPack) {
 		"",
 		fmt.Sprintf("%.2f", g.buyAmt),
 		fmt.Sprintf("%.2f", g.sellAmt),
-		colorNum(g.netBuy()),
+		formatter.ColorNum(g.netBuy()),
 		strconv.Itoa(g.buyN),
 		strconv.Itoa(g.sellN),
 		strconv.Itoa(g.otherN),
@@ -301,7 +302,7 @@ func printTradeCodeSummary(all []map[string]any) {
 			r.agg.name,
 			fmt.Sprintf("%.2f", r.agg.buyAmt),
 			fmt.Sprintf("%.2f", r.agg.sellAmt),
-			colorNum(r.agg.netBuy()),
+			formatter.ColorNum(r.agg.netBuy()),
 			fmt.Sprintf("%.0f", r.agg.buyCnt),
 			fmt.Sprintf("%.0f", r.agg.sellCnt),
 			strconv.Itoa(r.agg.buyN),
@@ -324,7 +325,7 @@ func printTradeGrandSummary(all []map[string]any) {
 		len(all),
 		g.buyAmt, g.buyN,
 		g.sellAmt, g.sellN,
-		colorNum(g.netBuy()),
+		formatter.ColorNum(g.netBuy()),
 		g.fee,
 		g.otherN,
 	)
@@ -557,5 +558,5 @@ func printTradeSummaryJSON(packs []accPack, all []map[string]any) {
 		"other_count":   g.otherN,
 	}
 
-	printJSON(result)
+	formatter.PrintJSON(result)
 }

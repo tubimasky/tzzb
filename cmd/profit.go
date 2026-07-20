@@ -9,6 +9,7 @@ import (
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 
+	"github.com/liyanran/tzzb-cli/internal/formatter"
 	"github.com/liyanran/tzzb-cli/pkg/api"
 )
 
@@ -30,7 +31,7 @@ var profitSummaryCmd = &cobra.Command{
 
 		if len(accounts) == 0 {
 			if outputJSON {
-				printJSON([]any{})
+				formatter.PrintJSON([]any{})
 			} else {
 				fmt.Println("暂无账户")
 			}
@@ -87,7 +88,7 @@ var profitSummaryCmd = &cobra.Command{
 				totalRate = totalProfit / totalPrincipal * 100
 			}
 
-			printJSON(map[string]any{
+			formatter.PrintJSON(map[string]any{
 				"accounts": result,
 				"summary": map[string]float64{
 					"principal":    totalPrincipal,
@@ -126,10 +127,10 @@ var profitSummaryCmd = &cobra.Command{
 				api.CategoryLabel(acc.Category),
 				fmt.Sprintf("%.2f", principal),
 				fmt.Sprintf("%.2f", acc.TotalAssets.F()),
-				colorNum(acc.HoldProfit.F()),
-				colorNum(acc.TodayProfit.F()),
-				colorNum(acc.TotalProfit.F()),
-				colorPct(rate),
+				formatter.ColorNum(acc.HoldProfit.F()),
+				formatter.ColorNum(acc.TodayProfit.F()),
+				formatter.ColorNum(acc.TotalProfit.F()),
+				formatter.ColorPct(rate),
 			})
 		}
 		table.Render()
@@ -143,7 +144,7 @@ var profitSummaryCmd = &cobra.Command{
 		color.New(color.Bold).Printf(
 			"汇总  本金: %.2f | 总资产: %.2f | 持仓盈亏: %s | 当日盈亏: %s | 总盈亏: %s | 总收益率: %s\n",
 			totalPrincipal, totalAssets,
-			colorNum(totalHold), colorNum(totalToday), colorNum(totalProfit), colorPct(totalRate),
+			formatter.ColorNum(totalHold), formatter.ColorNum(totalToday), formatter.ColorNum(totalProfit), formatter.ColorPct(totalRate),
 		)
 	},
 }

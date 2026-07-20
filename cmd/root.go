@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/liyanran/tzzb-cli/internal/formatter"
 	"github.com/liyanran/tzzb-cli/pkg/api"
 	"github.com/spf13/cobra"
 )
@@ -41,4 +42,12 @@ func init() {
 	rootCmd.AddCommand(profitCmd)
 	rootCmd.AddCommand(exportCmd)
 	rootCmd.AddCommand(trendCmd)
+}
+
+// 在命令执行前设置全局 formatter 配置
+func init() {
+	cobra.OnInitialize(func() {
+		// 将 cmd 层的 noColor 标志同步到 formatter 包
+		formatter.NoColor = noColor
+	})
 }

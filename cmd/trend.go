@@ -9,6 +9,7 @@ import (
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 
+	"github.com/liyanran/tzzb-cli/internal/formatter"
 	"github.com/liyanran/tzzb-cli/pkg/api"
 )
 
@@ -75,7 +76,7 @@ var trendSummaryCmd = &cobra.Command{
 				fmt.Fprintf(os.Stderr, "未知的账户类型: %s（支持 all/stock/fund）\n", trendCategory)
 				os.Exit(1)
 			}
-			printJSON(result)
+			formatter.PrintJSON(result)
 			return
 		}
 
@@ -130,7 +131,7 @@ var trendShowCmd = &cobra.Command{
 					"points":   convertTrendPointsToJSON(points),
 				})
 			}
-			printJSON(allResults)
+			formatter.PrintJSON(allResults)
 			return
 		}
 
@@ -197,15 +198,15 @@ func renderTrendTable(points []api.AssetTrendPoint) {
 
 		if actualIdx > 0 {
 			change := p.TotalAsset - points[actualIdx-1].TotalAsset
-			assetChange = colorNum(change)
-			dayProfit = colorNum(change)
+			assetChange = formatter.ColorNum(change)
+			dayProfit = formatter.ColorNum(change)
 
 			// 持仓盈亏率 = (当日市值 - 前日市值) / 前日市值
 			// 剔除资金流入流出的影响，只看持仓本身的涨跌
 			if points[actualIdx-1].MarketValue > 0 {
 				marketValueChange := p.MarketValue - points[actualIdx-1].MarketValue
 				rate := marketValueChange / points[actualIdx-1].MarketValue
-				holdingProfitRate = colorPctRaw(rate)
+				holdingProfitRate = formatter.ColorPctRaw(rate)
 			} else {
 				holdingProfitRate = "-"
 			}
@@ -248,7 +249,7 @@ func printTrendSummary(points []api.AssetTrendPoint) {
 	fmt.Printf("起始: %s (%.2f) → 最新: %s (%.2f) | ",
 		first.Date, first.TotalAsset, last.Date, last.TotalAsset)
 	fmt.Printf("资产变化: %s | 盈亏变化: %s\n",
-		colorNum(assetChange), colorNum(profitChange))
+		formatter.ColorNum(assetChange), formatter.ColorNum(profitChange))
 
 	// 计算最大回撤
 	maxAsset := 0.0
@@ -266,7 +267,7 @@ func printTrendSummary(points []api.AssetTrendPoint) {
 	}
 
 	if maxDrawdown > 0 {
-		fmt.Printf("最大回撤: %s\n", colorPctRaw(-maxDrawdown))
+		fmt.Printf("最大回撤: %s\n", formatter.ColorPctRaw(-maxDrawdown))
 	}
 }
 

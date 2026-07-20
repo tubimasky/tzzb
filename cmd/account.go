@@ -8,6 +8,7 @@ import (
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 
+	"github.com/liyanran/tzzb-cli/internal/formatter"
 	"github.com/liyanran/tzzb-cli/pkg/api"
 )
 
@@ -29,7 +30,7 @@ var accountListCmd = &cobra.Command{
 
 		if len(accounts) == 0 {
 			if outputJSON {
-				printJSON([]any{})
+				formatter.PrintJSON([]any{})
 			} else {
 				fmt.Println("暂无账户")
 			}
@@ -73,7 +74,7 @@ var accountListCmd = &cobra.Command{
 					"total_profit":  totalProfit,
 				},
 			}
-			printJSON(result)
+			formatter.PrintJSON(result)
 			return
 		}
 
@@ -94,9 +95,9 @@ var accountListCmd = &cobra.Command{
 				acc.Name(),
 				api.CategoryLabel(acc.Category),
 				fmt.Sprintf("%.2f", acc.TotalAssets.F()),
-				colorNum(acc.HoldProfit.F()),
-				colorNum(acc.TodayProfit.F()),
-				colorNum(acc.TotalProfit.F()),
+				formatter.ColorNum(acc.HoldProfit.F()),
+				formatter.ColorNum(acc.TodayProfit.F()),
+				formatter.ColorNum(acc.TotalProfit.F()),
 				fmt.Sprintf("%.1f%%", acc.PositionRate.F()*100),
 			})
 		}
@@ -105,20 +106,8 @@ var accountListCmd = &cobra.Command{
 		fmt.Println()
 		bold := color.New(color.Bold)
 		bold.Printf("汇总  总资产: %.2f | 持仓盈亏: %s | 当日盈亏: %s | 总盈亏: %s\n",
-			totalAssets, colorNum(totalHold), colorNum(totalToday), colorNum(totalProfit))
+			totalAssets, formatter.ColorNum(totalHold), formatter.ColorNum(totalToday), formatter.ColorNum(totalProfit))
 	},
-}
-
-// colorNum 按正负给数字上色（红涨绿跌是 A 股习惯，这里保持红负绿正的通用财务口径）。
-// colorNum 金额着色：中国股市，红涨绿跌
-func colorNum(v float64) string {
-	if noColor {
-		return fmt.Sprintf("%.2f", v)
-	}
-	if v < 0 {
-		return color.New(color.FgGreen).Sprintf("%.2f", v)
-	}
-	return color.New(color.FgRed).Sprintf("%.2f", v)
 }
 
 func init() {

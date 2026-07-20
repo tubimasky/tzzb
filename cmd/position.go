@@ -3,13 +3,11 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/liyanran/tzzb-cli/internal/formatter"
 	"github.com/liyanran/tzzb-cli/internal/service"
-	"github.com/liyanran/tzzb-cli/pkg/api"
 )
 
 var (
@@ -185,103 +183,6 @@ var positionFundCmd = &cobra.Command{
 		}
 		renderSvc.RenderTotal(merged, nil, sortBy, sortAsc)
 	},
-}
-
-// 类型别名：将 service 层的类型映射到 cmd 层，保持兼容性
-type posRow = service.PositionRow
-type mergedPos = service.MergedPosition
-type liveContext = service.LiveContext
-
-
-// 已废弃：使用 svc.LoadAccounts() 替代
-func mustLoadAccounts() []api.Account {
-	svc := getPositionService()
-	accounts, err := svc.LoadAccounts()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "获取持仓失败: %v\n", err)
-		os.Exit(1)
-	}
-	return accounts
-}
-
-// 已废弃：使用 svc.CollectRows() 替代
-func collectRows(accounts []api.Account, accountFilter, typeFilter string) []posRow {
-	svc := getPositionService()
-	return svc.CollectRows(accounts, accountFilter, typeFilter)
-}
-
-// 已废弃：使用 svc.LoadLiveContext() 替代
-func loadLiveContext(accounts []api.Account, rows []posRow) *liveContext {
-	svc := getPositionService()
-	return svc.LoadLiveContext(accounts, rows)
-}
-
-// 已废弃：使用 svc.MergeByCode() 替代
-func mergeByCode(rows []posRow) []mergedPos {
-	svc := getPositionService()
-	return svc.MergeByCode(rows)
-}
-
-func quoteOf(ctx *liveContext, code string) *api.Quote {
-	svc := getPositionService()
-	return svc.QuoteOf(ctx, code)
-}
-
-// 已废弃：使用 renderSvc.RenderByAccount() 替代
-func printByAccount(rows []posRow, ctx *liveContext) {
-	renderSvc := getRenderService()
-	renderSvc.RenderByAccount(rows, ctx)
-}
-
-// 已废弃：使用 renderSvc.RenderFlat() 替代
-func printFlat(rows []posRow, ctx *liveContext) {
-	renderSvc := getRenderService()
-	renderSvc.RenderFlat(rows, ctx)
-}
-
-// 已废弃：使用 renderSvc.RenderTotal() 替代
-func printTotal(merged []mergedPos, ctx *liveContext) {
-	renderSvc := getRenderService()
-	renderSvc.RenderTotal(merged, ctx, sortBy, sortAsc)
-}
-
-func recomputePos(r posRow, ctx *liveContext) api.LiveView {
-	svc := getPositionService()
-	return svc.RecomputePosition(r, ctx)
-}
-
-func recomputeMerged(m mergedPos, ctx *liveContext) api.LiveView {
-	svc := getPositionService()
-	return svc.RecomputeMerged(m, ctx)
-}
-
-// totalRowView 已废弃：使用 service.TotalRowView 替代
-type totalRowView = service.TotalRowView
-
-
-// normalizeCode 已废弃：使用 service.normalizeCode 替代
-func normalizeCode(code string) string {
-	code = strings.TrimSpace(code)
-	if i := strings.IndexAny(code, "."); i > 0 {
-		return code[:i]
-	}
-	return code
-}
-
-// posCells 基金/无行情行：不展示今日盈亏列，用接口值（本周盈亏列）。
-func posCells(r posRow, ctx *liveContext) []string {
-	lv := recomputePos(r, ctx)
-	return []string{
-		r.Position.Code,
-		r.Position.Name,
-		fmt.Sprintf("%.0f", r.Position.Count.F()),
-		formatter.PriceStr(r.Position.Cost.F()),
-		formatter.PriceStr(lv.Price),
-		fmt.Sprintf("%.2f", lv.Value),
-		formatter.ColorNum(lv.HoldProfit),
-		formatter.ColorNum(r.Position.WProfit.F()),
-		formatter.ColorPct(lv.HoldRate),
-	}
 }
 
 func init() {

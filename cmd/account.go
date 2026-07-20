@@ -28,10 +28,56 @@ var accountListCmd = &cobra.Command{
 		}
 
 		if len(accounts) == 0 {
-			fmt.Println("暂无账户")
+			if outputJSON {
+				printJSON([]any{})
+			} else {
+				fmt.Println("暂无账户")
+			}
 			return
 		}
 
+		// JSON 输出
+		if outputJSON {
+			type AccountOutput struct {
+				Name         string  `json:"name"`
+				Category     string  `json:"category"`
+				TotalAssets  float64 `json:"total_assets"`
+				HoldProfit   float64 `json:"hold_profit"`
+				TodayProfit  float64 `json:"today_profit"`
+				TotalProfit  float64 `json:"total_profit"`
+				PositionRate float64 `json:"position_rate"`
+			}
+			var output []AccountOutput
+			var totalAssets, totalHold, totalToday, totalProfit float64
+			for _, acc := range accounts {
+				totalAssets += acc.TotalAssets.F()
+				totalHold += acc.HoldProfit.F()
+				totalToday += acc.TodayProfit.F()
+				totalProfit += acc.TotalProfit.F()
+				output = append(output, AccountOutput{
+					Name:         acc.Name(),
+					Category:     api.CategoryLabel(acc.Category),
+					TotalAssets:  acc.TotalAssets.F(),
+					HoldProfit:   acc.HoldProfit.F(),
+					TodayProfit:  acc.TodayProfit.F(),
+					TotalProfit:  acc.TotalProfit.F(),
+					PositionRate: acc.PositionRate.F(),
+				})
+			}
+			result := map[string]any{
+				"accounts": output,
+				"summary": map[string]float64{
+					"total_assets":  totalAssets,
+					"hold_profit":   totalHold,
+					"today_profit":  totalToday,
+					"total_profit":  totalProfit,
+				},
+			}
+			printJSON(result)
+			return
+		}
+
+		// 表格输出
 		table := tablewriter.NewWriter(os.Stdout)
 		table.SetHeader([]string{"账户", "类型", "总资产", "持仓盈亏", "当日盈亏", "总盈亏", "仓位"})
 		table.SetBorder(true)
@@ -64,6 +110,7 @@ var accountListCmd = &cobra.Command{
 }
 
 // colorNum 按正负给数字上色（红涨绿跌是 A 股习惯，这里保持红负绿正的通用财务口径）。
+// colorNum 金额着色：中国股市，红涨绿跌
 func colorNum(v float64) string {
 	if v < 0 {
 		return color.New(color.FgGreen).Sprintf("%.2f", v)

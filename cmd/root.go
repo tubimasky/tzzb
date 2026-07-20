@@ -9,8 +9,9 @@ import (
 )
 
 var (
-	apiClient *api.Client
-	rootCmd   = &cobra.Command{
+	apiClient  *api.Client
+	outputJSON bool // 全局 JSON 输出标志
+	rootCmd    = &cobra.Command{
 		Use:   "tzzb",
 		Short: "投资账本命令行工具",
 		Long:  `投资账本命令行工具 - 查看持仓、记录交易、查看收益、导出数据`,
@@ -26,6 +27,9 @@ func Execute() {
 
 func init() {
 	apiClient = api.NewClient()
+
+	// 全局 --json 标志
+	rootCmd.PersistentFlags().BoolVarP(&outputJSON, "json", "j", false, "以 JSON 格式输出")
 
 	rootCmd.AddCommand(loginCmd)
 	rootCmd.AddCommand(accountCmd)

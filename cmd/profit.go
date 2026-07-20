@@ -29,7 +29,11 @@ var profitSummaryCmd = &cobra.Command{
 		}
 
 		if len(accounts) == 0 {
-			fmt.Println("暂无账户")
+			if outputJSON {
+				printJSON([]any{})
+			} else {
+				fmt.Println("暂无账户")
+			}
 			return
 		}
 
@@ -38,6 +42,66 @@ var profitSummaryCmd = &cobra.Command{
 			return accounts[i].TotalProfit.F() > accounts[j].TotalProfit.F()
 		})
 
+		// JSON 输出
+		if outputJSON {
+			type ProfitJSON struct {
+				Account      string  `json:"account"`
+				Category     string  `json:"category"`
+				Principal    float64 `json:"principal"`
+				TotalAssets  float64 `json:"total_assets"`
+				HoldProfit   float64 `json:"hold_profit"`
+				TodayProfit  float64 `json:"today_profit"`
+				TotalProfit  float64 `json:"total_profit"`
+				TotalRate    float64 `json:"total_rate"`
+			}
+			var result []ProfitJSON
+			var totalPrincipal, totalAssets, totalHold, totalToday, totalProfit float64
+
+			for _, acc := range accounts {
+				principal := acc.Principal.F()
+				totalPrincipal += principal
+				totalAssets += acc.TotalAssets.F()
+				totalHold += acc.HoldProfit.F()
+				totalToday += acc.TodayProfit.F()
+				totalProfit += acc.TotalProfit.F()
+
+				rate := 0.0
+				if principal > 0 {
+					rate = acc.TotalProfit.F() / principal * 100
+				}
+
+				result = append(result, ProfitJSON{
+					Account:     acc.Name(),
+					Category:    api.CategoryLabel(acc.Category),
+					Principal:   principal,
+					TotalAssets: acc.TotalAssets.F(),
+					HoldProfit:  acc.HoldProfit.F(),
+					TodayProfit: acc.TodayProfit.F(),
+					TotalProfit: acc.TotalProfit.F(),
+					TotalRate:   rate,
+				})
+			}
+
+			totalRate := 0.0
+			if totalPrincipal > 0 {
+				totalRate = totalProfit / totalPrincipal * 100
+			}
+
+			printJSON(map[string]any{
+				"accounts": result,
+				"summary": map[string]float64{
+					"principal":    totalPrincipal,
+					"total_assets": totalAssets,
+					"hold_profit":  totalHold,
+					"today_profit": totalToday,
+					"total_profit": totalProfit,
+					"total_rate":   totalRate,
+				},
+			})
+			return
+		}
+
+		// 表格输出
 		table := tablewriter.NewWriter(os.Stdout)
 		table.SetHeader([]string{"账户", "类型", "本金", "总资产", "持仓盈亏", "当日盈亏", "总盈亏", "总收益率"})
 		table.SetBorder(true)

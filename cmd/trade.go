@@ -29,6 +29,33 @@ var tradeListCmd = &cobra.Command{
 	Long:  `按账户列出近 3 个月流水明细。可用 -a 过滤账户。`,
 	Run: func(cmd *cobra.Command, args []string) {
 		matched := mustMatchTradeAccounts()
+
+		if outputJSON {
+			var allResults []map[string]any
+			for _, acc := range matched {
+				records, err := apiClient.GetMoneyHistory(acc)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "【%s】获取流水失败: %v\n", acc.Name(), err)
+					continue
+				}
+				if len(records) == 0 {
+					continue
+				}
+				allResults = append(allResults, map[string]any{
+					"account":  acc.Name(),
+					"category": api.CategoryLabel(acc.Category),
+					"count":    len(records),
+					"records":  records,
+				})
+			}
+			if len(allResults) == 0 {
+				printJSON([]any{})
+			} else {
+				printJSON(allResults)
+			}
+			return
+		}
+
 		var total int
 		for _, acc := range matched {
 			records, err := apiClient.GetMoneyHistory(acc)
@@ -81,7 +108,16 @@ var tradeSummaryCmd = &cobra.Command{
 			all = append(all, records...)
 		}
 		if len(all) == 0 {
-			fmt.Println("暂无交易记录")
+			if outputJSON {
+				printJSON(map[string]any{"error": "no trade records"})
+			} else {
+				fmt.Println("暂无交易记录")
+			}
+			return
+		}
+
+		if outputJSON {
+			printTradeSummaryJSON(packs, all)
 			return
 		}
 
@@ -432,4 +468,94 @@ func init() {
 	tradeCmd.AddCommand(tradeSummaryCmd)
 	tradeListCmd.Flags().StringVarP(&tradeAccount, "account", "a", "", "按账户名过滤（模糊匹配），默认全部")
 	tradeSummaryCmd.Flags().StringVarP(&tradeAccount, "account", "a", "", "按账户名过滤（模糊匹配），默认全部")
+}
+
+// JSON 输出函数
+
+func printTradeSummaryJSON(packs []accPack, all []map[string]any) {
+	result := map[string]any{}
+
+	// 按账户汇总
+	var accountSummary []map[string]any
+	var g tradeAgg
+	for _, p := range packs {
+		var a tradeAgg
+		for _, r := range p.records {
+			a.add(r)
+		}
+		g.buyAmt += a.buyAmt
+		g.sellAmt += a.sellAmt
+		g.fee += a.fee
+		g.buyN += a.buyN
+		g.sellN += a.sellN
+		g.otherN += a.otherN
+
+		accountSummary = append(accountSummary, map[string]any{
+			"account":     p.acc.Name(),
+			"category":    api.CategoryLabel(p.acc.Category),
+			"buy_amount":  a.buyAmt,
+			"sell_amount": a.sellAmt,
+			"net_buy":     a.netBuy(),
+			"buy_count":   a.buyN,
+			"sell_count":  a.sellN,
+			"other_count": a.otherN,
+			"fee":         a.fee,
+			"total_count": a.trades(),
+		})
+	}
+	result["by_account"] = accountSummary
+
+	// 按代码汇总
+	byCode := map[string]*tradeAgg{}
+	for _, r := range all {
+		code := strings.TrimSpace(fmt.Sprintf("%v", r["code"]))
+		if code == "" || code == "<nil>" {
+			code = "(无代码)"
+		}
+		a, ok := byCode[code]
+		if !ok {
+			a = &tradeAgg{}
+			byCode[code] = a
+		}
+		a.add(r)
+	}
+
+	var codeSummary []map[string]any
+	for code, a := range byCode {
+		if a.buyN+a.sellN == 0 {
+			continue
+		}
+		codeSummary = append(codeSummary, map[string]any{
+			"code":        code,
+			"name":        a.name,
+			"buy_amount":  a.buyAmt,
+			"sell_amount": a.sellAmt,
+			"net_buy":     a.netBuy(),
+			"buy_volume":  a.buyCnt,
+			"sell_volume": a.sellCnt,
+			"buy_count":   a.buyN,
+			"sell_count":  a.sellN,
+		})
+	}
+	// 按买卖金额合计降序
+	sort.Slice(codeSummary, func(i, j int) bool {
+		ti := codeSummary[i]["buy_amount"].(float64) + codeSummary[i]["sell_amount"].(float64)
+		tj := codeSummary[j]["buy_amount"].(float64) + codeSummary[j]["sell_amount"].(float64)
+		return ti > tj
+	})
+	result["by_code"] = codeSummary
+
+	// 总汇总
+	result["summary"] = map[string]any{
+		"total_records": len(all),
+		"buy_amount":    g.buyAmt,
+		"buy_count":     g.buyN,
+		"sell_amount":   g.sellAmt,
+		"sell_count":    g.sellN,
+		"net_buy":       g.netBuy(),
+		"fee":           g.fee,
+		"other_count":   g.otherN,
+	}
+
+	printJSON(result)
 }

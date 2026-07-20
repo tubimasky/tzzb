@@ -15,15 +15,19 @@ import (
 	"github.com/liyanran/tzzb-cli/pkg/api"
 )
 
-var calculator = service.NewCalculator()
-
 var (
+	calculator = service.NewCalculator()
+
 	filterAccount string
 	filterType    string // all / stock / fund
 	flatList      bool
 	sortBy        string // value/day/hold/rate/dayrate/code/name/count
 	sortAsc       bool
 )
+
+func getPositionService() *service.PositionService {
+	return service.NewPositionService(apiClient, calculator)
+}
 
 var positionCmd = &cobra.Command{
 	Use:   "position",
@@ -42,8 +46,13 @@ var positionListCmd = &cobra.Command{
 	Short: "按账户查看持仓明细",
 	Long:  `默认按账户分块展示；加 --flat 打成一张大表（带账户列）。股票行按插件口径重算实时今日盈亏。`,
 	Run: func(cmd *cobra.Command, args []string) {
-		accounts := mustLoadAccounts()
-		rows := collectRows(accounts, filterAccount, filterType)
+		svc := getPositionService()
+		accounts, err := svc.LoadAccounts()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "加载账户失败: %v\n", err)
+			os.Exit(1)
+		}
+		rows := svc.CollectRows(accounts, filterAccount, filterType)
 		if len(rows) == 0 {
 			if outputJSON {
 				formatter.PrintJSON([]any{})
@@ -52,7 +61,7 @@ var positionListCmd = &cobra.Command{
 			}
 			return
 		}
-		ctx := loadLiveContext(accounts, rows)
+		ctx := svc.LoadLiveContext(accounts, rows)
 		if outputJSON {
 			printPositionListJSON(rows, ctx, flatList)
 			return
@@ -73,8 +82,13 @@ var positionTotalCmd = &cobra.Command{
 排序（-s/--sort）: value(默认) day hold rate dayrate code name count
 升序加 --asc，默认降序。`,
 	Run: func(cmd *cobra.Command, args []string) {
-		accounts := mustLoadAccounts()
-		rows := collectRows(accounts, filterAccount, filterType)
+		svc := getPositionService()
+		accounts, err := svc.LoadAccounts()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "加载账户失败: %v\n", err)
+			os.Exit(1)
+		}
+		rows := svc.CollectRows(accounts, filterAccount, filterType)
 		if len(rows) == 0 {
 			if outputJSON {
 				formatter.PrintJSON([]any{})
@@ -83,8 +97,8 @@ var positionTotalCmd = &cobra.Command{
 			}
 			return
 		}
-		ctx := loadLiveContext(accounts, rows)
-		merged := mergeByCode(rows)
+		ctx := svc.LoadLiveContext(accounts, rows)
+		merged := svc.MergeByCode(rows)
 		if outputJSON {
 			printPositionTotalJSON(merged, ctx)
 			return
@@ -107,8 +121,13 @@ var positionStockCmd = &cobra.Command{
   tzzb position stock -s hold --asc
   tzzb position stock -s dayrate`,
 	Run: func(cmd *cobra.Command, args []string) {
-		accounts := mustLoadAccounts()
-		rows := collectRows(accounts, filterAccount, "stock")
+		svc := getPositionService()
+		accounts, err := svc.LoadAccounts()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "加载账户失败: %v\n", err)
+			os.Exit(1)
+		}
+		rows := svc.CollectRows(accounts, filterAccount, "stock")
 		if len(rows) == 0 {
 			if outputJSON {
 				formatter.PrintJSON([]any{})
@@ -117,8 +136,8 @@ var positionStockCmd = &cobra.Command{
 			}
 			return
 		}
-		ctx := loadLiveContext(accounts, rows)
-		merged := mergeByCode(rows)
+		ctx := svc.LoadLiveContext(accounts, rows)
+		merged := svc.MergeByCode(rows)
 		if outputJSON {
 			printPositionTotalJSON(merged, ctx)
 			return
@@ -135,8 +154,13 @@ var positionFundCmd = &cobra.Command{
 排序（-s/--sort）: value(默认) hold rate code name count
 升序加 --asc。`,
 	Run: func(cmd *cobra.Command, args []string) {
-		accounts := mustLoadAccounts()
-		rows := collectRows(accounts, filterAccount, "fund")
+		svc := getPositionService()
+		accounts, err := svc.LoadAccounts()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "加载账户失败: %v\n", err)
+			os.Exit(1)
+		}
+		rows := svc.CollectRows(accounts, filterAccount, "fund")
 		if len(rows) == 0 {
 			if outputJSON {
 				formatter.PrintJSON([]any{})
@@ -145,7 +169,7 @@ var positionFundCmd = &cobra.Command{
 			}
 			return
 		}
-		merged := mergeByCode(rows)
+		merged := svc.MergeByCode(rows)
 		if outputJSON {
 			printPositionTotalJSON(merged, nil)
 			return
@@ -154,27 +178,16 @@ var positionFundCmd = &cobra.Command{
 	},
 }
 
-// posRow 是一条带账户信息的持仓行。
-type posRow struct {
-	Account  string
-	Category string // manual/fund/rzrq/common
-	api.Position
-}
+// 类型别名：将 service 层的类型映射到 cmd 层，保持兼容性
+type posRow = service.PositionRow
+type mergedPos = service.MergedPosition
+type liveContext = service.LiveContext
 
-type mergedPos struct {
-	Code       string
-	Name       string
-	Count      float64
-	Cost       float64 // 数量加权成本
-	Price      float64
-	Value      float64
-	HoldProfit float64
-	Market     string   // 用于行情
-	Accounts   []string // 出现在哪些账户
-}
 
+// 已废弃：使用 svc.LoadAccounts() 替代
 func mustLoadAccounts() []api.Account {
-	accounts, err := apiClient.GetAccountList()
+	svc := getPositionService()
+	accounts, err := svc.LoadAccounts()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "获取持仓失败: %v\n", err)
 		os.Exit(1)
@@ -182,148 +195,37 @@ func mustLoadAccounts() []api.Account {
 	return accounts
 }
 
+// 已废弃：使用 svc.CollectRows() 替代
 func collectRows(accounts []api.Account, accountFilter, typeFilter string) []posRow {
-	typeFilter = strings.ToLower(strings.TrimSpace(typeFilter))
-	if typeFilter == "" {
-		typeFilter = "all"
-	}
-	var out []posRow
-	for _, acc := range accounts {
-		if accountFilter != "" && !strings.Contains(acc.Name(), accountFilter) {
-			continue
-		}
-		if !matchType(acc.Category, typeFilter) {
-			continue
-		}
-		for _, p := range acc.Positions {
-			out = append(out, posRow{
-				Account:  acc.Name(),
-				Category: acc.Category,
-				Position: p,
-			})
-		}
-	}
-	return out
+	svc := getPositionService()
+	return svc.CollectRows(accounts, accountFilter, typeFilter)
 }
 
-// matchType: stock = 非基金账户；fund = 基金账户；all = 全部。
-func matchType(category, typeFilter string) bool {
-	switch typeFilter {
-	case "all", "":
-		return true
-	case "stock", "stocks", "etf":
-		return category != "fund"
-	case "fund", "funds":
-		return category == "fund"
-	default:
-		fmt.Fprintf(os.Stderr, "未知类型 %q，支持 all/stock/fund\n", typeFilter)
-		os.Exit(1)
-		return false
-	}
-}
-
-// liveContext 插件同源实时上下文：getQuotes + 各账户当日成交。
-type liveContext struct {
-	quotes map[string]api.Quote            // code → quote
-	trades map[string][]api.DayTrade       // accountName → trades
-	byCode map[string][]api.DayTrade       // code → 跨账户合并成交（total/stock 用）
-}
-
+// 已废弃：使用 svc.LoadLiveContext() 替代
 func loadLiveContext(accounts []api.Account, rows []posRow) *liveContext {
-	ctx := &liveContext{
-		quotes: map[string]api.Quote{},
-		trades: map[string][]api.DayTrade{},
-		byCode: map[string][]api.DayTrade{},
-	}
-	// 行情
-	var refs []api.QuoteRef
-	seenRef := map[string]bool{}
-	for _, r := range rows {
-		if r.Category == "fund" {
-			continue
-		}
-		code := normalizeCode(r.Code)
-		if code == "" {
-			continue
-		}
-		mkt := api.GuessMarket(code, r.Market)
-		key := mkt + ":" + code
-		if seenRef[key] {
-			continue
-		}
-		seenRef[key] = true
-		refs = append(refs, api.QuoteRef{Code: code, Market: mkt})
-	}
-	if len(refs) > 0 {
-		q, err := apiClient.GetQuotes(refs)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "获取实时行情失败（今日盈亏将显示 -）: %v\n", err)
-		} else {
-			ctx.quotes = q
-		}
-	}
-	// 当日成交：只拉 rows 里出现过的非基金账户
-	needAcc := map[string]bool{}
-	for _, r := range rows {
-		if r.Category != "fund" {
-			needAcc[r.Account] = true
-		}
-	}
-	for _, acc := range accounts {
-		name := acc.Name()
-		if !needAcc[name] || acc.Category == "fund" {
-			continue
-		}
-		ts, err := apiClient.GetDayTrades(acc)
-		if err != nil {
-			// 单个账户失败不阻断
-			continue
-		}
-		ctx.trades[name] = ts
-		for _, t := range ts {
-			ctx.byCode[t.Code] = append(ctx.byCode[t.Code], t)
-		}
-	}
-	return ctx
+	svc := getPositionService()
+	return svc.LoadLiveContext(accounts, rows)
+}
+
+// 已废弃：使用 svc.MergeByCode() 替代
+func mergeByCode(rows []posRow) []mergedPos {
+	svc := getPositionService()
+	return svc.MergeByCode(rows)
 }
 
 func quoteOf(ctx *liveContext, code string) *api.Quote {
-	if ctx == nil || ctx.quotes == nil {
-		return nil
-	}
-	q, ok := ctx.quotes[normalizeCode(code)]
-	if !ok {
-		return nil
-	}
-	return &q
+	svc := getPositionService()
+	return svc.QuoteOf(ctx, code)
 }
 
 func recomputePos(r posRow, ctx *liveContext) api.LiveView {
-	var trades []api.DayTrade
-	if ctx != nil && r.Category != "fund" {
-		for _, t := range ctx.trades[r.Account] {
-			if t.Code == normalizeCode(r.Code) {
-				trades = append(trades, t)
-			}
-		}
-	}
-	q := quoteOf(ctx, r.Code)
-	isFund := r.Category == "fund"
-	return calculator.RecomputePosition(
-		r.Count.F(), r.Cost.F(), r.Price.F(), r.Value.F(),
-		r.HoldProfit.F(), r.HoldRate.F(), q, trades, isFund,
-	)
+	svc := getPositionService()
+	return svc.RecomputePosition(r, ctx)
 }
 
 func recomputeMerged(m mergedPos, ctx *liveContext) api.LiveView {
-	var trades []api.DayTrade
-	if ctx != nil {
-		trades = ctx.byCode[normalizeCode(m.Code)]
-	}
-	return calculator.RecomputeMerged(
-		m.Count, m.Cost, m.Price, m.Value, m.HoldProfit,
-		quoteOf(ctx, m.Code), trades,
-	)
+	svc := getPositionService()
+	return svc.RecomputeMerged(m, ctx)
 }
 
 func printByAccount(rows []posRow, ctx *liveContext) {
@@ -338,7 +240,7 @@ func printByAccount(rows []posRow, ctx *liveContext) {
 		groups[r.Account] = append(groups[r.Account], r)
 	}
 
-	showDay := ctx != nil && len(ctx.quotes) > 0
+	showDay := ctx != nil && len(ctx.Quotes) > 0
 	var grandValue, grandProfit, grandDay float64
 	var hasDay bool
 	for _, name := range order {
@@ -365,9 +267,9 @@ func printByAccount(rows []posRow, ctx *liveContext) {
 					subHasDay = true
 				}
 				table.Append([]string{
-					r.Code, r.Name,
-					fmt.Sprintf("%.0f", r.Count.F()),
-					formatter.PriceStr(r.Cost.F()),
+					r.Position.Code, r.Position.Name,
+					fmt.Sprintf("%.0f", r.Position.Count.F()),
+					formatter.PriceStr(r.Position.Cost.F()),
 					formatter.PriceStr(lv.Price),
 					fmt.Sprintf("%.2f", lv.Value),
 					formatter.ColorNum(lv.HoldProfit),
@@ -425,7 +327,7 @@ func printFlat(rows []posRow, ctx *liveContext) {
 		return views[i].lv.Value > views[j].lv.Value
 	})
 
-	showDay := ctx != nil && len(ctx.quotes) > 0
+	showDay := ctx != nil && len(ctx.Quotes) > 0
 	table := tablewriter.NewWriter(os.Stdout)
 	if showDay {
 		table.SetHeader([]string{"账户", "类型", "代码", "名称", "持仓量", "成本价", "现价", "市值", "持仓盈亏", "今日盈亏", "今日涨幅", "收益率"})
@@ -447,9 +349,9 @@ func printFlat(rows []posRow, ctx *liveContext) {
 			}
 			table.Append([]string{
 				r.Account, api.CategoryLabel(r.Category),
-				r.Code, r.Name,
-				fmt.Sprintf("%.0f", r.Count.F()),
-				formatter.PriceStr(r.Cost.F()),
+				r.Position.Code, r.Position.Name,
+				fmt.Sprintf("%.0f", r.Position.Count.F()),
+				formatter.PriceStr(r.Position.Cost.F()),
 				formatter.PriceStr(lv.Price),
 				fmt.Sprintf("%.2f", lv.Value),
 				formatter.ColorNum(lv.HoldProfit),
@@ -537,7 +439,7 @@ func printTotal(merged []mergedPos, ctx *liveContext) {
 		}
 	}
 
-	showDay := ctx != nil && len(ctx.quotes) > 0
+	showDay := ctx != nil && len(ctx.Quotes) > 0
 	table := tablewriter.NewWriter(os.Stdout)
 	if showDay {
 		table.SetHeader([]string{"代码", "名称", "总数量", "均成本", "现价", "总市值", "占比", "持仓盈亏", "今日盈亏", "今日涨幅", "收益率", "账户"})
@@ -702,69 +604,8 @@ func cmpTotalView(a, b totalRowView, key string) int {
 	}
 }
 
-func mergeByCode(rows []posRow) []mergedPos {
-	type acc struct {
-		m        mergedPos
-		costSum  float64
-		countSum float64
-	}
-	byCode := map[string]*acc{}
-	var order []string
 
-	for _, r := range rows {
-		code := normalizeCode(r.Code)
-		a, ok := byCode[code]
-		if !ok {
-			a = &acc{
-				m: mergedPos{
-					Code:   code,
-					Name:   r.Name,
-					Market: r.Market,
-				},
-			}
-			byCode[code] = a
-			order = append(order, code)
-		}
-		if a.m.Name == "" && r.Name != "" {
-			a.m.Name = r.Name
-		}
-		if a.m.Market == "" && r.Market != "" {
-			a.m.Market = r.Market
-		}
-		if r.Price.F() > 0 {
-			a.m.Price = r.Price.F()
-		}
-		a.m.Count += r.Count.F()
-		a.m.Value += r.Value.F()
-		a.m.HoldProfit += r.HoldProfit.F()
-		a.costSum += r.Cost.F() * r.Count.F()
-		a.countSum += r.Count.F()
-	}
-
-	out := make([]mergedPos, 0, len(order))
-	for _, code := range order {
-		a := byCode[code]
-		if a.countSum > 0 {
-			a.m.Cost = a.costSum / a.countSum
-		}
-		var accs []string
-		seen := map[string]bool{}
-		for _, r := range rows {
-			if normalizeCode(r.Code) != code {
-				continue
-			}
-			if !seen[r.Account] {
-				seen[r.Account] = true
-				accs = append(accs, r.Account)
-			}
-		}
-		a.m.Accounts = accs
-		out = append(out, a.m)
-	}
-	return out
-}
-
-// normalizeCode 去掉市场后缀，便于跨账户合并（515790.SZ → 515790）。
+// normalizeCode 已废弃：使用 service.normalizeCode 替代
 func normalizeCode(code string) string {
 	code = strings.TrimSpace(code)
 	if i := strings.IndexAny(code, "."); i > 0 {
@@ -777,14 +618,14 @@ func normalizeCode(code string) string {
 func posCells(r posRow, ctx *liveContext) []string {
 	lv := recomputePos(r, ctx)
 	return []string{
-		r.Code,
-		r.Name,
-		fmt.Sprintf("%.0f", r.Count.F()),
-		formatter.PriceStr(r.Cost.F()),
+		r.Position.Code,
+		r.Position.Name,
+		fmt.Sprintf("%.0f", r.Position.Count.F()),
+		formatter.PriceStr(r.Position.Cost.F()),
 		formatter.PriceStr(lv.Price),
 		fmt.Sprintf("%.2f", lv.Value),
 		formatter.ColorNum(lv.HoldProfit),
-		formatter.ColorNum(r.WProfit.F()),
+		formatter.ColorNum(r.Position.WProfit.F()),
 		formatter.ColorPct(lv.HoldRate),
 	}
 }
@@ -845,7 +686,7 @@ func printByAccountJSON(rows []posRow, ctx *liveContext) {
 		groups[r.Account] = append(groups[r.Account], r)
 	}
 
-	showDay := ctx != nil && len(ctx.quotes) > 0
+	showDay := ctx != nil && len(ctx.Quotes) > 0
 	var result []AccountGroup
 	var grandValue, grandProfit, grandDay float64
 	var hasDay bool
@@ -870,15 +711,15 @@ func printByAccountJSON(rows []posRow, ctx *liveContext) {
 			}
 
 			pos := PositionJSON{
-				Code:       r.Code,
-				Name:       r.Name,
-				Count:      r.Count.F(),
-				Cost:       r.Cost.F(),
+				Code:       r.Position.Code,
+				Name:       r.Position.Name,
+				Count:      r.Position.Count.F(),
+				Cost:       r.Position.Cost.F(),
 				Price:      lv.Price,
 				Value:      lv.Value,
 				HoldProfit: lv.HoldProfit,
 				HoldRate:   lv.HoldRate,
-				WeekProfit: r.WProfit.F(),
+				WeekProfit: r.Position.WProfit.F(),
 			}
 			if useLive && lv.DayOK {
 				pos.DayProfit = &lv.DayProfit
@@ -959,7 +800,7 @@ func printFlatJSON(rows []posRow, ctx *liveContext) {
 		return views[i].lv.Value > views[j].lv.Value
 	})
 
-	showDay := ctx != nil && len(ctx.quotes) > 0
+	showDay := ctx != nil && len(ctx.Quotes) > 0
 	var result []FlatPositionJSON
 	var totalValue, totalProfit, totalDay float64
 	var hasDay bool
@@ -972,15 +813,15 @@ func printFlatJSON(rows []posRow, ctx *liveContext) {
 		pos := FlatPositionJSON{
 			Account:    r.Account,
 			Category:   api.CategoryLabel(r.Category),
-			Code:       r.Code,
-			Name:       r.Name,
-			Count:      r.Count.F(),
-			Cost:       r.Cost.F(),
+			Code:       r.Position.Code,
+			Name:       r.Position.Name,
+			Count:      r.Position.Count.F(),
+			Cost:       r.Position.Cost.F(),
 			Price:      lv.Price,
 			Value:      lv.Value,
 			HoldProfit: lv.HoldProfit,
 			HoldRate:   lv.HoldRate,
-			WeekProfit: r.WProfit.F(),
+			WeekProfit: r.Position.WProfit.F(),
 		}
 
 		if showDay && r.Category != "fund" && lv.DayOK {
@@ -1022,7 +863,7 @@ func printTotalJSON(merged []mergedPos, ctx *liveContext) {
 		Accounts   []string `json:"accounts"`
 	}
 
-	showDay := ctx != nil && len(ctx.quotes) > 0
+	showDay := ctx != nil && len(ctx.Quotes) > 0
 	var result []TotalPositionJSON
 	var totalValue, totalProfit, totalDay float64
 	var hasDay bool

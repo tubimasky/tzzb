@@ -224,7 +224,7 @@ func NewTrendCommandService(client *api.Client) *TrendCommandService {
 }
 
 // ExecuteShowCommand 执行 show 命令逻辑
-func (s *TrendCommandService) ExecuteShowCommand(accountFilter string, days int, limit int, outputJSON bool) {
+func (s *TrendCommandService) ExecuteShowCommand(accountFilter string, days int, limit int, outputJSON bool, showBenchmark bool) {
 	accounts, err := s.client.GetAccountList()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "获取账户失败: %v\n", err)
@@ -249,12 +249,12 @@ func (s *TrendCommandService) ExecuteShowCommand(accountFilter string, days int,
 	}
 
 	for _, data := range allData {
-		s.renderService.RenderSingleAccountTrend(data, limit)
+		s.renderService.RenderSingleAccountTrend(data, limit, showBenchmark)
 	}
 }
 
 // ExecuteSummaryCommand 执行 summary 命令逻辑
-func (s *TrendCommandService) ExecuteSummaryCommand(category string, days int, limit int, outputJSON bool) {
+func (s *TrendCommandService) ExecuteSummaryCommand(category string, days int, limit int, outputJSON bool, showBenchmark bool) {
 	accounts, err := s.client.GetAccountList()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "获取账户失败: %v\n", err)
@@ -297,22 +297,22 @@ func (s *TrendCommandService) ExecuteSummaryCommand(category string, days int, l
 	// 文本渲染
 	switch category {
 	case "all", "":
-		s.renderService.RenderAggregatedTrend("全部账户", s.trendService.AggregateTrendData(groups.All, days), days, limit)
+		s.renderService.RenderAggregatedTrend("全部账户", s.trendService.AggregateTrendData(groups.All, days), days, limit, showBenchmark)
 		if len(groups.Stock) > 0 {
-			s.renderService.RenderAggregatedTrend("股票账户", s.trendService.AggregateTrendData(groups.Stock, days), days, limit)
+			s.renderService.RenderAggregatedTrend("股票账户", s.trendService.AggregateTrendData(groups.Stock, days), days, limit, showBenchmark)
 		}
 		if len(groups.Fund) > 0 {
-			s.renderService.RenderAggregatedTrend("基金账户", s.trendService.AggregateTrendData(groups.Fund, days), days, limit)
+			s.renderService.RenderAggregatedTrend("基金账户", s.trendService.AggregateTrendData(groups.Fund, days), days, limit, showBenchmark)
 		}
 	case "stock":
 		if len(groups.Stock) > 0 {
-			s.renderService.RenderAggregatedTrend("股票账户", s.trendService.AggregateTrendData(groups.Stock, days), days, limit)
+			s.renderService.RenderAggregatedTrend("股票账户", s.trendService.AggregateTrendData(groups.Stock, days), days, limit, showBenchmark)
 		} else {
 			fmt.Println("没有股票账户")
 		}
 	case "fund":
 		if len(groups.Fund) > 0 {
-			s.renderService.RenderAggregatedTrend("基金账户", s.trendService.AggregateTrendData(groups.Fund, days), days, limit)
+			s.renderService.RenderAggregatedTrend("基金账户", s.trendService.AggregateTrendData(groups.Fund, days), days, limit, showBenchmark)
 		} else {
 			fmt.Println("没有基金账户")
 		}
@@ -410,11 +410,27 @@ func NewTrendRenderService(trendService *TrendService) *TrendRenderService {
 }
 
 // RenderTrendTable 渲染趋势表格
-func (s *TrendRenderService) RenderTrendTable(points []api.AssetTrendPoint, limit int) {
+func (s *TrendRenderService) RenderTrendTable(points []api.AssetTrendPoint, limit int, showBenchmark bool) {
 	displayPoints, start := s.trendService.LimitPoints(points, limit)
 
+	// 获取上证指数数据（如果需要）
+	var benchmarkReturns map[string]float64
+	if showBenchmark {
+		// 获取足够的天数（包括被省略的数据点）
+		totalDays := len(points) + 10
+		benchmarkPoints, err := api.GetShanghaiIndexHistory(totalDays)
+		if err == nil {
+			benchmarkReturns = api.CalculateBenchmarkReturns(benchmarkPoints)
+		}
+	}
+
+	headers := []string{"日期", "总资产", "资产变化", "持仓盈亏率", "现金", "市值", "仓位"}
+	if showBenchmark {
+		headers = []string{"日期", "总资产", "资产变化", "持仓盈亏率", "上证涨跌", "超额收益", "现金", "市值", "仓位"}
+	}
+
 	table := tablewriter.NewWriter(os.Stdout)
-	table.SetHeader([]string{"日期", "总资产", "资产变化", "持仓盈亏率", "现金", "市值", "仓位"})
+	table.SetHeader(headers)
 	table.SetBorder(true)
 	table.SetAutoWrapText(false)
 
@@ -425,6 +441,8 @@ func (s *TrendRenderService) RenderTrendTable(points []api.AssetTrendPoint, limi
 		// 计算资产变化（相对前一天）
 		var assetChange string
 		var holdingProfitRate string
+		var benchmarkReturn string
+		var excessReturn string
 
 		if actualIdx > 0 {
 			change := p.TotalAsset - points[actualIdx-1].TotalAsset
@@ -435,23 +453,51 @@ func (s *TrendRenderService) RenderTrendTable(points []api.AssetTrendPoint, limi
 				marketValueChange := p.MarketValue - points[actualIdx-1].MarketValue
 				rate := marketValueChange / points[actualIdx-1].MarketValue
 				holdingProfitRate = formatter.ColorPctRaw(rate)
+
+				// 如果有基准数据，计算超额收益
+				if showBenchmark && benchmarkReturns != nil {
+					if bmRet, ok := benchmarkReturns[p.Date]; ok {
+						benchmarkReturn = formatter.ColorPctRaw(bmRet)
+						excessReturn = formatter.ColorPctRaw(rate - bmRet)
+					} else {
+						benchmarkReturn = "-"
+						excessReturn = "-"
+					}
+				}
 			} else {
 				holdingProfitRate = "-"
+				if showBenchmark {
+					benchmarkReturn = "-"
+					excessReturn = "-"
+				}
 			}
 		} else {
 			assetChange = "-"
 			holdingProfitRate = "-"
+			if showBenchmark {
+				benchmarkReturn = "-"
+				excessReturn = "-"
+			}
 		}
 
-		table.Append([]string{
+		row := []string{
 			p.Date,
 			fmt.Sprintf("%.2f", p.TotalAsset),
 			assetChange,
 			holdingProfitRate,
+		}
+
+		if showBenchmark {
+			row = append(row, benchmarkReturn, excessReturn)
+		}
+
+		row = append(row,
 			fmt.Sprintf("%.2f", p.Cash),
 			fmt.Sprintf("%.2f", p.MarketValue),
 			fmt.Sprintf("%.1f%%", p.PositionRate*100),
-		})
+		)
+
+		table.Append(row)
 	}
 	table.Render()
 
@@ -478,7 +524,7 @@ func (s *TrendRenderService) PrintTrendSummary(stats TrendStatistics) {
 }
 
 // RenderSingleAccountTrend 渲染单个账户的趋势
-func (s *TrendRenderService) RenderSingleAccountTrend(data TrendData, limit int) {
+func (s *TrendRenderService) RenderSingleAccountTrend(data TrendData, limit int, showBenchmark bool) {
 	if len(data.Points) == 0 {
 		fmt.Printf("\n【%s】暂无趋势数据\n", data.Account)
 		return
@@ -486,21 +532,21 @@ func (s *TrendRenderService) RenderSingleAccountTrend(data TrendData, limit int)
 
 	fmt.Printf("\n【%s · %s】近 %d 天资产趋势（共 %d 个数据点）\n",
 		data.Account, api.CategoryLabel(data.Category), data.Days, len(data.Points))
-	s.RenderTrendTable(data.Points, limit)
+	s.RenderTrendTable(data.Points, limit, showBenchmark)
 
 	stats := s.trendService.ComputeStatistics(data.Points)
 	s.PrintTrendSummary(stats)
 }
 
 // RenderAggregatedTrend 渲染聚合后的趋势（汇总视图）
-func (s *TrendRenderService) RenderAggregatedTrend(title string, points []api.AssetTrendPoint, days int, limit int) {
+func (s *TrendRenderService) RenderAggregatedTrend(title string, points []api.AssetTrendPoint, days int, limit int, showBenchmark bool) {
 	if len(points) == 0 {
 		fmt.Printf("\n【%s】暂无趋势数据\n", title)
 		return
 	}
 
 	fmt.Printf("\n【%s】近 %d 天资产趋势（共 %d 个数据点）\n", title, days, len(points))
-	s.RenderTrendTable(points, limit)
+	s.RenderTrendTable(points, limit, showBenchmark)
 
 	stats := s.trendService.ComputeStatistics(points)
 	s.PrintTrendSummary(stats)

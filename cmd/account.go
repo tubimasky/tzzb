@@ -112,6 +112,9 @@ var accountListCmd = &cobra.Command{
 // colorNum 按正负给数字上色（红涨绿跌是 A 股习惯，这里保持红负绿正的通用财务口径）。
 // colorNum 金额着色：中国股市，红涨绿跌
 func colorNum(v float64) string {
+	if noColor {
+		return fmt.Sprintf("%.2f", v)
+	}
 	if v < 0 {
 		return color.New(color.FgGreen).Sprintf("%.2f", v)
 	}

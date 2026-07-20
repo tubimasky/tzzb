@@ -826,6 +826,9 @@ func rateStr(v float64, ok bool) string {
 // colorPct 用于已经是百分比的值（如 HoldRate = 45.05 表示 45.05%）
 // 中国股市：红涨绿跌
 func colorPct(v float64) string {
+	if noColor {
+		return fmt.Sprintf("%.2f%%", v)
+	}
 	if v < 0 {
 		return color.New(color.FgGreen).Sprintf("%.2f%%", v)
 	}

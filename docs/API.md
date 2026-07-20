@@ -77,7 +77,48 @@ user_id=<uid>
 
 ---
 
-## 3. 已验证的接口
+## 3. 代码结构
+
+本 CLI 的代码按职责分层：
+
+```
+pkg/api/           # API 客户端（与同花顺后端交互）
+├── client.go      # HTTP 客户端基础设施、通用类型、常量
+├── quote.go       # 行情接口（GetQuotes）
+├── account.go     # 账户接口（GetAccountList、账户详情、账户卡）
+├── position.go    # 持仓类型、插件口径重算（RecomputeLive）
+└── trade.go       # 交易流水（GetDayTrades、GetMoneyHistory、GetAssetTrend）
+
+internal/service/  # 业务逻辑服务层
+└── calculator/    # 计算服务（持仓汇总、收益计算）
+    ├── calculator.go        # Calculator 接口定义
+    ├── position.go          # 持仓汇总实现
+    └── profit.go            # 收益计算实现
+
+internal/formatter/ # 格式化输出层
+├── account.go     # 账户列表格式化
+├── position.go    # 持仓明细格式化
+├── trade.go       # 交易流水格式化
+├── profit.go      # 收益汇总格式化
+└── trend.go       # 资产趋势格式化
+
+cmd/               # 命令行入口
+├── root.go        # 根命令
+├── account.go     # account 子命令
+├── position.go    # position 子命令
+├── trade.go       # trade 子命令
+├── profit.go      # profit 子命令
+└── ...
+```
+
+**设计原则：**
+
+- **pkg/api** 只负责 HTTP 通信和 JSON 解析，返回原始数据结构，不做业务逻辑
+- **internal/service** 实现业务逻辑（汇总、计算、过滤），调用 api 层获取数据
+- **internal/formatter** 负责输出格式化（表格、CSV、JSON），依赖 service 层
+- **cmd** 只做参数解析和流程编排，调用 service 和 formatter
+
+## 4. 已验证的接口
 
 所有路径都相对于 BaseURL（即完整 URL = BaseURL + path）。
 

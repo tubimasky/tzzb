@@ -11,8 +11,11 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/liyanran/tzzb-cli/internal/formatter"
+	"github.com/liyanran/tzzb-cli/internal/service"
 	"github.com/liyanran/tzzb-cli/pkg/api"
 )
+
+var calculator = service.NewCalculator()
 
 var (
 	filterAccount string
@@ -305,28 +308,20 @@ func recomputePos(r posRow, ctx *liveContext) api.LiveView {
 		}
 	}
 	q := quoteOf(ctx, r.Code)
-	if r.Category == "fund" {
-		q = nil
-		trades = nil
-	}
-	return api.RecomputeLive(
+	isFund := r.Category == "fund"
+	return calculator.RecomputePosition(
 		r.Count.F(), r.Cost.F(), r.Price.F(), r.Value.F(),
-		r.HoldProfit.F(), r.HoldRate.F(), q, trades,
+		r.HoldProfit.F(), r.HoldRate.F(), q, trades, isFund,
 	)
 }
 
 func recomputeMerged(m mergedPos, ctx *liveContext) api.LiveView {
-	apiHoldRate := 0.0
-	costBasis := m.Cost * m.Count
-	if costBasis > 0 {
-		apiHoldRate = m.HoldProfit / costBasis
-	}
 	var trades []api.DayTrade
 	if ctx != nil {
 		trades = ctx.byCode[normalizeCode(m.Code)]
 	}
-	return api.RecomputeLive(
-		m.Count, m.Cost, m.Price, m.Value, m.HoldProfit, apiHoldRate,
+	return calculator.RecomputeMerged(
+		m.Count, m.Cost, m.Price, m.Value, m.HoldProfit,
 		quoteOf(ctx, m.Code), trades,
 	)
 }
@@ -814,6 +809,245 @@ func init() {
 // JSON 输出函数
 
 func printByAccountJSON(rows []posRow, ctx *liveContext) {
+	type PositionJSON struct {
+		Code       string   `json:"code"`
+		Name       string   `json:"name"`
+		Count      float64  `json:"count"`
+		Cost       float64  `json:"cost"`
+		Price      float64  `json:"price"`
+		Value      float64  `json:"value"`
+		HoldProfit float64  `json:"hold_profit"`
+		HoldRate   float64  `json:"hold_rate"`
+		DayProfit  *float64 `json:"day_profit,omitempty"`
+		DayRate    *float64 `json:"day_rate,omitempty"`
+		WeekProfit float64  `json:"week_profit"`
+	}
+	type AccountGroup struct {
+		Account   string         `json:"account"`
+		Category  string         `json:"category"`
+		Positions []PositionJSON `json:"positions"`
+		Summary   struct {
+			Value      float64  `json:"value"`
+			HoldProfit float64  `json:"hold_profit"`
+			DayProfit  *float64 `json:"day_profit,omitempty"`
+			Count      int      `json:"count"`
+		} `json:"summary"`
+	}
+
+	var order []string
+	groups := map[string][]posRow{}
+	catOf := map[string]string{}
+	for _, r := range rows {
+		if _, ok := groups[r.Account]; !ok {
+			order = append(order, r.Account)
+			catOf[r.Account] = r.Category
+		}
+		groups[r.Account] = append(groups[r.Account], r)
+	}
+
+	showDay := ctx != nil && len(ctx.quotes) > 0
+	var result []AccountGroup
+	var grandValue, grandProfit, grandDay float64
+	var hasDay bool
+
+	for _, name := range order {
+		list := groups[name]
+		useLive := showDay && catOf[name] != "fund"
+
+		group := AccountGroup{
+			Account:  name,
+			Category: api.CategoryLabel(catOf[name]),
+		}
+
+		var subValue, subProfit, subDay float64
+		var subHasDay bool
+		for _, r := range list {
+			lv := recomputePos(r, ctx)
+			if useLive {
+				lv = recomputePos(r, ctx)
+			} else {
+				lv = recomputePos(r, nil)
+			}
+
+			pos := PositionJSON{
+				Code:       r.Code,
+				Name:       r.Name,
+				Count:      r.Count.F(),
+				Cost:       r.Cost.F(),
+				Price:      lv.Price,
+				Value:      lv.Value,
+				HoldProfit: lv.HoldProfit,
+				HoldRate:   lv.HoldRate,
+				WeekProfit: r.WProfit.F(),
+			}
+			if useLive && lv.DayOK {
+				pos.DayProfit = &lv.DayProfit
+				pos.DayRate = &lv.DayRate
+			}
+			group.Positions = append(group.Positions, pos)
+
+			subValue += lv.Value
+			subProfit += lv.HoldProfit
+			if lv.DayOK && useLive {
+				subDay += lv.DayProfit
+				subHasDay = true
+			}
+		}
+
+		group.Summary.Value = subValue
+		group.Summary.HoldProfit = subProfit
+		group.Summary.Count = len(list)
+		if subHasDay {
+			group.Summary.DayProfit = &subDay
+		}
+
+		result = append(result, group)
+		grandValue += subValue
+		grandProfit += subProfit
+		if subHasDay {
+			grandDay += subDay
+			hasDay = true
+		}
+	}
+
+	summary := map[string]any{
+		"value":       grandValue,
+		"hold_profit": grandProfit,
+		"rows":        len(rows),
+		"accounts":    len(order),
+	}
+	if hasDay {
+		summary["day_profit"] = grandDay
+	}
+
+	formatter.PrintJSON(map[string]any{
+		"accounts": result,
+		"summary":  summary,
+	})
+}
+
+func printFlatJSON(rows []posRow, ctx *liveContext) {
+	type FlatPositionJSON struct {
+		Account    string   `json:"account"`
+		Category   string   `json:"category"`
+		Code       string   `json:"code"`
+		Name       string   `json:"name"`
+		Count      float64  `json:"count"`
+		Cost       float64  `json:"cost"`
+		Price      float64  `json:"price"`
+		Value      float64  `json:"value"`
+		HoldProfit float64  `json:"hold_profit"`
+		HoldRate   float64  `json:"hold_rate"`
+		DayProfit  *float64 `json:"day_profit,omitempty"`
+		DayRate    *float64 `json:"day_rate,omitempty"`
+		WeekProfit float64  `json:"week_profit"`
+	}
+
+	type flatView struct {
+		r  posRow
+		lv api.LiveView
+	}
+	views := make([]flatView, 0, len(rows))
+	for _, r := range rows {
+		c := ctx
+		if r.Category == "fund" {
+			c = nil
+		}
+		views = append(views, flatView{r: r, lv: recomputePos(r, c)})
+	}
+	sort.Slice(views, func(i, j int) bool {
+		return views[i].lv.Value > views[j].lv.Value
+	})
+
+	showDay := ctx != nil && len(ctx.quotes) > 0
+	var result []FlatPositionJSON
+	var totalValue, totalProfit, totalDay float64
+	var hasDay bool
+
+	for _, v := range views {
+		r, lv := v.r, v.lv
+		totalValue += lv.Value
+		totalProfit += lv.HoldProfit
+
+		pos := FlatPositionJSON{
+			Account:    r.Account,
+			Category:   api.CategoryLabel(r.Category),
+			Code:       r.Code,
+			Name:       r.Name,
+			Count:      r.Count.F(),
+			Cost:       r.Cost.F(),
+			Price:      lv.Price,
+			Value:      lv.Value,
+			HoldProfit: lv.HoldProfit,
+			HoldRate:   lv.HoldRate,
+			WeekProfit: r.WProfit.F(),
+		}
+
+		if showDay && r.Category != "fund" && lv.DayOK {
+			totalDay += lv.DayProfit
+			hasDay = true
+			pos.DayProfit = &lv.DayProfit
+			pos.DayRate = &lv.DayRate
+		}
+		result = append(result, pos)
+	}
+
+	summary := map[string]any{
+		"value":       totalValue,
+		"hold_profit": totalProfit,
+		"rows":        len(rows),
+	}
+	if hasDay {
+		summary["day_profit"] = totalDay
+	}
+
+	formatter.PrintJSON(map[string]any{
+		"positions": result,
+		"summary":   summary,
+	})
+}
+
+func printTotalJSON(merged []mergedPos, ctx *liveContext) {
+	type TotalPositionJSON struct {
+		Code       string   `json:"code"`
+		Name       string   `json:"name"`
+		Count      float64  `json:"count"`
+		Cost       float64  `json:"cost"`
+		Price      float64  `json:"price"`
+		Value      float64  `json:"value"`
+		HoldProfit float64  `json:"hold_profit"`
+		HoldRate   float64  `json:"hold_rate"`
+		DayProfit  *float64 `json:"day_profit,omitempty"`
+		DayRate    *float64 `json:"day_rate,omitempty"`
+		Accounts   []string `json:"accounts"`
+	}
+
+	showDay := ctx != nil && len(ctx.quotes) > 0
+	var result []TotalPositionJSON
+	var totalValue, totalProfit, totalDay float64
+	var hasDay bool
+
+	// 转换为 totalRowView 并排序
+	views := make([]totalRowView, 0, len(merged))
+	for _, m := range merged {
+		lv := recomputeMerged(m, ctx)
+		views = append(views, totalRowView{
+			m:       m,
+			price:   lv.Price,
+			value:   lv.Value,
+			hold:    lv.HoldProfit,
+			rate:    lv.HoldRate,
+			day:     lv.DayProfit,
+			dayOK:   lv.DayOK,
+			dayRate: lv.DayRate,
+			rateOK:  lv.DayOK,
+		})
+	}
+	sortTotalViews(views)
+
+	for _, v := range views {
+		m := v.m
+		pos := TotalPositionJSON{
 			Code:       m.Code,
 			Name:       m.Name,
 			Count:      m.Count,

@@ -175,7 +175,7 @@ func mustMatchTrendAccounts() []api.Account {
 
 func renderTrendTable(points []api.AssetTrendPoint) {
 	table := tablewriter.NewWriter(os.Stdout)
-	table.SetHeader([]string{"日期", "总资产", "资产变化", "当日盈亏", "持仓盈亏率", "现金", "市值", "仓位"})
+	table.SetHeader([]string{"日期", "总资产", "资产变化", "持仓盈亏率", "现金", "市值", "仓位"})
 	table.SetBorder(true)
 	table.SetAutoWrapText(false)
 
@@ -193,13 +193,11 @@ func renderTrendTable(points []api.AssetTrendPoint) {
 
 		// 计算资产变化（相对前一天）
 		var assetChange string
-		var dayProfit string
 		var holdingProfitRate string
 
 		if actualIdx > 0 {
 			change := p.TotalAsset - points[actualIdx-1].TotalAsset
 			assetChange = formatter.ColorNum(change)
-			dayProfit = formatter.ColorNum(change)
 
 			// 持仓盈亏率 = (当日市值 - 前日市值) / 前日市值
 			// 剔除资金流入流出的影响，只看持仓本身的涨跌
@@ -212,7 +210,6 @@ func renderTrendTable(points []api.AssetTrendPoint) {
 			}
 		} else {
 			assetChange = "-"
-			dayProfit = "-"
 			holdingProfitRate = "-"
 		}
 
@@ -220,7 +217,6 @@ func renderTrendTable(points []api.AssetTrendPoint) {
 			p.Date,
 			fmt.Sprintf("%.2f", p.TotalAsset),
 			assetChange,
-			dayProfit,
 			holdingProfitRate,
 			fmt.Sprintf("%.2f", p.Cash),
 			fmt.Sprintf("%.2f", p.MarketValue),

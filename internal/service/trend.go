@@ -1,9 +1,14 @@
 package service
 
 import (
+	"fmt"
+	"os"
 	"strings"
 
+	"github.com/fatih/color"
+	"github.com/liyanran/tzzb-cli/internal/formatter"
 	"github.com/liyanran/tzzb-cli/pkg/api"
+	"github.com/olekukonko/tablewriter"
 )
 
 // TrendService 趋势数据业务逻辑
@@ -197,3 +202,307 @@ func (s *TrendService) LimitPoints(points []api.AssetTrendPoint, limit int) ([]a
 	start := len(points) - limit
 	return points[start:], start
 }
+
+
+// TrendCommandService 趋势命令服务（封装重复的加载+渲染流程）
+type TrendCommandService struct {
+	trendService  *TrendService
+	renderService *TrendRenderService
+	jsonService   *TrendJSONService
+	client        *api.Client
+}
+
+// NewTrendCommandService 创建趋势命令服务
+func NewTrendCommandService(client *api.Client) *TrendCommandService {
+	trendSvc := NewTrendService(client)
+	return &TrendCommandService{
+		trendService:  trendSvc,
+		renderService: NewTrendRenderService(trendSvc),
+		jsonService:   NewTrendJSONService(trendSvc),
+		client:        client,
+	}
+}
+
+// ExecuteShowCommand 执行 show 命令逻辑
+func (s *TrendCommandService) ExecuteShowCommand(accountFilter string, days int, limit int, outputJSON bool) {
+	accounts, err := s.client.GetAccountList()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "获取账户失败: %v\n", err)
+		os.Exit(1)
+	}
+
+	matched := s.trendService.FilterAccounts(accounts, accountFilter)
+	if len(matched) == 0 {
+		fmt.Println("没有匹配的账户")
+		os.Exit(0)
+	}
+
+	allData := s.trendService.LoadTrendForAccounts(matched, days)
+
+	if outputJSON {
+		var results []map[string]any
+		for _, data := range allData {
+			results = append(results, s.jsonService.BuildSingleAccountJSON(data, limit))
+		}
+		s.jsonService.PrintJSON(map[string]any{"accounts": results})
+		return
+	}
+
+	for _, data := range allData {
+		s.renderService.RenderSingleAccountTrend(data, limit)
+	}
+}
+
+// ExecuteSummaryCommand 执行 summary 命令逻辑
+func (s *TrendCommandService) ExecuteSummaryCommand(category string, days int, limit int, outputJSON bool) {
+	accounts, err := s.client.GetAccountList()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "获取账户失败: %v\n", err)
+		os.Exit(1)
+	}
+
+	groups := s.trendService.GroupAccountsByCategory(accounts)
+
+	if outputJSON {
+		result := map[string]any{}
+		switch category {
+		case "all", "":
+			result["all"] = s.jsonService.BuildAggregatedJSON("全部账户", s.trendService.AggregateTrendData(groups.All, days), days, limit)
+			if len(groups.Stock) > 0 {
+				result["stock"] = s.jsonService.BuildAggregatedJSON("股票账户", s.trendService.AggregateTrendData(groups.Stock, days), days, limit)
+			}
+			if len(groups.Fund) > 0 {
+				result["fund"] = s.jsonService.BuildAggregatedJSON("基金账户", s.trendService.AggregateTrendData(groups.Fund, days), days, limit)
+			}
+		case "stock":
+			if len(groups.Stock) > 0 {
+				result["stock"] = s.jsonService.BuildAggregatedJSON("股票账户", s.trendService.AggregateTrendData(groups.Stock, days), days, limit)
+			} else {
+				result["error"] = "没有股票账户"
+			}
+		case "fund":
+			if len(groups.Fund) > 0 {
+				result["fund"] = s.jsonService.BuildAggregatedJSON("基金账户", s.trendService.AggregateTrendData(groups.Fund, days), days, limit)
+			} else {
+				result["error"] = "没有基金账户"
+			}
+		default:
+			fmt.Fprintf(os.Stderr, "未知的账户类型: %s（支持 all/stock/fund）\n", category)
+			os.Exit(1)
+		}
+		s.jsonService.PrintJSON(result)
+		return
+	}
+
+	// 文本渲染
+	switch category {
+	case "all", "":
+		s.renderService.RenderAggregatedTrend("全部账户", s.trendService.AggregateTrendData(groups.All, days), days, limit)
+		if len(groups.Stock) > 0 {
+			s.renderService.RenderAggregatedTrend("股票账户", s.trendService.AggregateTrendData(groups.Stock, days), days, limit)
+		}
+		if len(groups.Fund) > 0 {
+			s.renderService.RenderAggregatedTrend("基金账户", s.trendService.AggregateTrendData(groups.Fund, days), days, limit)
+		}
+	case "stock":
+		if len(groups.Stock) > 0 {
+			s.renderService.RenderAggregatedTrend("股票账户", s.trendService.AggregateTrendData(groups.Stock, days), days, limit)
+		} else {
+			fmt.Println("没有股票账户")
+		}
+	case "fund":
+		if len(groups.Fund) > 0 {
+			s.renderService.RenderAggregatedTrend("基金账户", s.trendService.AggregateTrendData(groups.Fund, days), days, limit)
+		} else {
+			fmt.Println("没有基金账户")
+		}
+	default:
+		fmt.Fprintf(os.Stderr, "未知的账户类型: %s（支持 all/stock/fund）\n", category)
+		os.Exit(1)
+	}
+}
+
+
+// TrendJSONService 趋势 JSON 输出服务
+type TrendJSONService struct {
+	trendService *TrendService
+}
+
+// NewTrendJSONService 创建趋势 JSON 服务
+func NewTrendJSONService(trendService *TrendService) *TrendJSONService {
+	return &TrendJSONService{trendService: trendService}
+}
+
+// ConvertTrendPointsToJSON 转换趋势数据点为 JSON（带变化量计算）
+func (s *TrendJSONService) ConvertTrendPointsToJSON(points []api.AssetTrendPoint, limit int) []map[string]any {
+	displayPoints, start := s.trendService.LimitPoints(points, limit)
+
+	var result []map[string]any
+	for i := 0; i < len(displayPoints); i++ {
+		p := displayPoints[i]
+		actualIdx := start + i
+
+		item := map[string]any{
+			"date":          p.Date,
+			"total_asset":   p.TotalAsset,
+			"cash":          p.Cash,
+			"market_value":  p.MarketValue,
+			"position_rate": p.PositionRate,
+		}
+
+		// 计算变化量
+		if actualIdx > 0 {
+			change := p.TotalAsset - points[actualIdx-1].TotalAsset
+			item["asset_change"] = change
+			item["day_profit"] = change
+
+			// 持仓盈亏率
+			if points[actualIdx-1].MarketValue > 0 {
+				marketValueChange := p.MarketValue - points[actualIdx-1].MarketValue
+				rate := marketValueChange / points[actualIdx-1].MarketValue * 100
+				item["holding_profit_rate"] = rate
+			}
+		}
+
+		result = append(result, item)
+	}
+	return result
+}
+
+// BuildSingleAccountJSON 构建单个账户趋势 JSON
+func (s *TrendJSONService) BuildSingleAccountJSON(data TrendData, limit int) map[string]any {
+	return map[string]any{
+		"account":  data.Account,
+		"category": api.CategoryLabel(data.Category),
+		"days":     data.Days,
+		"points":   s.ConvertTrendPointsToJSON(data.Points, limit),
+	}
+}
+
+// BuildAggregatedJSON 构建聚合趋势 JSON
+func (s *TrendJSONService) BuildAggregatedJSON(title string, points []api.AssetTrendPoint, days int, limit int) map[string]any {
+	if len(points) == 0 {
+		return map[string]any{"error": "no trend data"}
+	}
+
+	return map[string]any{
+		"title":  title,
+		"days":   days,
+		"count":  len(points),
+		"points": s.ConvertTrendPointsToJSON(points, limit),
+	}
+}
+
+// PrintJSON 输出 JSON（统一入口）
+func (s *TrendJSONService) PrintJSON(data map[string]any) {
+	formatter.PrintJSON(data)
+}
+
+
+// TrendRenderService 趋势渲染服务
+type TrendRenderService struct {
+	trendService *TrendService
+}
+
+// NewTrendRenderService 创建趋势渲染服务
+func NewTrendRenderService(trendService *TrendService) *TrendRenderService {
+	return &TrendRenderService{trendService: trendService}
+}
+
+// RenderTrendTable 渲染趋势表格
+func (s *TrendRenderService) RenderTrendTable(points []api.AssetTrendPoint, limit int) {
+	displayPoints, start := s.trendService.LimitPoints(points, limit)
+
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetHeader([]string{"日期", "总资产", "资产变化", "持仓盈亏率", "现金", "市值", "仓位"})
+	table.SetBorder(true)
+	table.SetAutoWrapText(false)
+
+	for i := 0; i < len(displayPoints); i++ {
+		p := displayPoints[i]
+		actualIdx := start + i
+
+		// 计算资产变化（相对前一天）
+		var assetChange string
+		var holdingProfitRate string
+
+		if actualIdx > 0 {
+			change := p.TotalAsset - points[actualIdx-1].TotalAsset
+			assetChange = formatter.ColorNum(change)
+
+			// 持仓盈亏率 = (当日市值 - 前日市值) / 前日市值
+			if points[actualIdx-1].MarketValue > 0 {
+				marketValueChange := p.MarketValue - points[actualIdx-1].MarketValue
+				rate := marketValueChange / points[actualIdx-1].MarketValue
+				holdingProfitRate = formatter.ColorPctRaw(rate)
+			} else {
+				holdingProfitRate = "-"
+			}
+		} else {
+			assetChange = "-"
+			holdingProfitRate = "-"
+		}
+
+		table.Append([]string{
+			p.Date,
+			fmt.Sprintf("%.2f", p.TotalAsset),
+			assetChange,
+			holdingProfitRate,
+			fmt.Sprintf("%.2f", p.Cash),
+			fmt.Sprintf("%.2f", p.MarketValue),
+			fmt.Sprintf("%.1f%%", p.PositionRate*100),
+		})
+	}
+	table.Render()
+
+	if start > 0 {
+		fmt.Printf("（已省略前 %d 个数据点，仅显示最近 %d 天）\n", start, len(displayPoints))
+	}
+}
+
+// PrintTrendSummary 打印趋势汇总（区间变化、最大回撤）
+func (s *TrendRenderService) PrintTrendSummary(stats TrendStatistics) {
+	if stats.FirstDate == "" {
+		return
+	}
+
+	color.New(color.Bold).Printf("\n区间变化  ")
+	fmt.Printf("起始: %s (%.2f) → 最新: %s (%.2f) | ",
+		stats.FirstDate, stats.FirstAsset, stats.LastDate, stats.LastAsset)
+	fmt.Printf("资产变化: %s | 盈亏变化: %s\n",
+		formatter.ColorNum(stats.AssetChange), formatter.ColorNum(stats.ProfitChange))
+
+	if stats.HasMaxDrawdown {
+		fmt.Printf("最大回撤: %s\n", formatter.ColorPctRaw(-stats.MaxDrawdown))
+	}
+}
+
+// RenderSingleAccountTrend 渲染单个账户的趋势
+func (s *TrendRenderService) RenderSingleAccountTrend(data TrendData, limit int) {
+	if len(data.Points) == 0 {
+		fmt.Printf("\n【%s】暂无趋势数据\n", data.Account)
+		return
+	}
+
+	fmt.Printf("\n【%s · %s】近 %d 天资产趋势（共 %d 个数据点）\n",
+		data.Account, api.CategoryLabel(data.Category), data.Days, len(data.Points))
+	s.RenderTrendTable(data.Points, limit)
+
+	stats := s.trendService.ComputeStatistics(data.Points)
+	s.PrintTrendSummary(stats)
+}
+
+// RenderAggregatedTrend 渲染聚合后的趋势（汇总视图）
+func (s *TrendRenderService) RenderAggregatedTrend(title string, points []api.AssetTrendPoint, days int, limit int) {
+	if len(points) == 0 {
+		fmt.Printf("\n【%s】暂无趋势数据\n", title)
+		return
+	}
+
+	fmt.Printf("\n【%s】近 %d 天资产趋势（共 %d 个数据点）\n", title, days, len(points))
+	s.RenderTrendTable(points, limit)
+
+	stats := s.trendService.ComputeStatistics(points)
+	s.PrintTrendSummary(stats)
+}
+

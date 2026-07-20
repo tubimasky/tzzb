@@ -6,7 +6,10 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/fatih/color"
+	"github.com/liyanran/tzzb-cli/internal/formatter"
 	"github.com/liyanran/tzzb-cli/pkg/api"
+	"github.com/olekukonko/tablewriter"
 )
 
 // PositionService 持仓业务逻辑层
@@ -360,3 +363,731 @@ func normalizeCode(code string) string {
 	code = strings.TrimSuffix(code, ".OF")
 	return code
 }
+
+
+// PositionCommandService 持仓命令业务逻辑（封装重复的加载+渲染流程）
+type PositionCommandService struct {
+	positionSvc *PositionService
+	renderSvc   *RenderService
+}
+
+// NewPositionCommandService 创建持仓命令服务
+func NewPositionCommandService(positionSvc *PositionService, renderSvc *RenderService) *PositionCommandService {
+	return &PositionCommandService{
+		positionSvc: positionSvc,
+		renderSvc:   renderSvc,
+	}
+}
+
+// ExecuteListCommand 执行 list 命令逻辑
+func (s *PositionCommandService) ExecuteListCommand(accountFilter, typeFilter string, flatList, outputJSON bool) {
+	accounts, err := s.positionSvc.LoadAccounts()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "加载账户失败: %v\n", err)
+		os.Exit(1)
+	}
+	rows := s.positionSvc.CollectRows(accounts, accountFilter, typeFilter)
+	if len(rows) == 0 {
+		if outputJSON {
+			formatter.PrintJSON([]any{})
+		} else {
+			fmt.Println("暂无持仓")
+		}
+		return
+	}
+	ctx := s.positionSvc.LoadLiveContext(accounts, rows)
+	if outputJSON {
+		if flatList {
+			s.renderSvc.PrintJSON(s.renderSvc.BuildFlatJSON(rows, ctx))
+		} else {
+			s.renderSvc.PrintJSON(s.renderSvc.BuildByAccountJSON(rows, ctx))
+		}
+		return
+	}
+	if flatList {
+		s.renderSvc.RenderFlat(rows, ctx)
+		return
+	}
+	s.renderSvc.RenderByAccount(rows, ctx)
+}
+
+// ExecuteTotalCommand 执行 total/stock/fund 命令逻辑
+func (s *PositionCommandService) ExecuteTotalCommand(accountFilter, typeFilter, sortBy string, sortAsc, outputJSON bool, withLiveContext bool) {
+	accounts, err := s.positionSvc.LoadAccounts()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "加载账户失败: %v\n", err)
+		os.Exit(1)
+	}
+	rows := s.positionSvc.CollectRows(accounts, accountFilter, typeFilter)
+	if len(rows) == 0 {
+		if outputJSON {
+			formatter.PrintJSON([]any{})
+		} else {
+			msg := "暂无持仓"
+			if typeFilter == "stock" {
+				msg = "暂无股票/ETF 持仓"
+			} else if typeFilter == "fund" {
+				msg = "暂无基金持仓"
+			}
+			fmt.Println(msg)
+		}
+		return
+	}
+
+	var ctx *LiveContext
+	if withLiveContext {
+		ctx = s.positionSvc.LoadLiveContext(accounts, rows)
+	}
+
+	merged := s.positionSvc.MergeByCode(rows)
+	if outputJSON {
+		s.renderSvc.PrintJSON(s.renderSvc.BuildTotalJSON(merged, ctx, sortBy, sortAsc))
+		return
+	}
+	s.renderSvc.RenderTotal(merged, ctx, sortBy, sortAsc)
+}
+
+
+// PositionJSON JSON 输出的持仓结构
+type PositionJSON struct {
+	Code       string   `json:"code"`
+	Name       string   `json:"name"`
+	Count      float64  `json:"count"`
+	Cost       float64  `json:"cost"`
+	Price      float64  `json:"price"`
+	Value      float64  `json:"value"`
+	HoldProfit float64  `json:"hold_profit"`
+	HoldRate   float64  `json:"hold_rate"`
+	DayProfit  *float64 `json:"day_profit,omitempty"`
+	DayRate    *float64 `json:"day_rate,omitempty"`
+	WeekProfit float64  `json:"week_profit"`
+}
+
+// AccountGroupJSON 按账户分组的 JSON 结构
+type AccountGroupJSON struct {
+	Account   string         `json:"account"`
+	Category  string         `json:"category"`
+	Positions []PositionJSON `json:"positions"`
+	Summary   struct {
+		Value      float64  `json:"value"`
+		HoldProfit float64  `json:"hold_profit"`
+		DayProfit  *float64 `json:"day_profit,omitempty"`
+		Count      int      `json:"count"`
+	} `json:"summary"`
+}
+
+// BuildByAccountJSON 构建按账户分组的 JSON 数据
+func (s *RenderService) BuildByAccountJSON(rows []PositionRow, ctx *LiveContext) map[string]any {
+	groups := s.GroupByAccount(rows)
+	showDay := ctx != nil && len(ctx.Quotes) > 0
+
+	var result []AccountGroupJSON
+	var grandValue, grandProfit, grandDay float64
+	var hasDay bool
+
+	for _, group := range groups {
+		useLive := showDay && group.Category != "fund"
+
+		jsonGroup := AccountGroupJSON{
+			Account:  group.Account,
+			Category: api.CategoryLabel(group.Category),
+		}
+
+		var subValue, subProfit, subDay float64
+		var subHasDay bool
+
+		for _, r := range group.Rows {
+			var lv api.LiveView
+			if useLive {
+				lv = s.positionService.RecomputePosition(r, ctx)
+			} else {
+				lv = s.positionService.RecomputePosition(r, nil)
+			}
+
+			pos := PositionJSON{
+				Code:       r.Position.Code,
+				Name:       r.Position.Name,
+				Count:      r.Position.Count.F(),
+				Cost:       r.Position.Cost.F(),
+				Price:      lv.Price,
+				Value:      lv.Value,
+				HoldProfit: lv.HoldProfit,
+				HoldRate:   lv.HoldRate,
+				WeekProfit: r.Position.WProfit.F(),
+			}
+			if useLive && lv.DayOK {
+				pos.DayProfit = &lv.DayProfit
+				pos.DayRate = &lv.DayRate
+			}
+			jsonGroup.Positions = append(jsonGroup.Positions, pos)
+
+			subValue += lv.Value
+			subProfit += lv.HoldProfit
+			if lv.DayOK && useLive {
+				subDay += lv.DayProfit
+				subHasDay = true
+			}
+		}
+
+		jsonGroup.Summary.Value = subValue
+		jsonGroup.Summary.HoldProfit = subProfit
+		jsonGroup.Summary.Count = len(group.Rows)
+		if subHasDay {
+			jsonGroup.Summary.DayProfit = &subDay
+		}
+
+		result = append(result, jsonGroup)
+		grandValue += subValue
+		grandProfit += subProfit
+		if subHasDay {
+			grandDay += subDay
+			hasDay = true
+		}
+	}
+
+	summary := map[string]any{
+		"value":       grandValue,
+		"hold_profit": grandProfit,
+		"rows":        len(rows),
+		"accounts":    len(groups),
+	}
+	if hasDay {
+		summary["day_profit"] = grandDay
+	}
+
+	return map[string]any{
+		"accounts": result,
+		"summary":  summary,
+	}
+}
+
+// FlatPositionJSON 扁平视图 JSON 结构
+type FlatPositionJSON struct {
+	Account    string   `json:"account"`
+	Category   string   `json:"category"`
+	Code       string   `json:"code"`
+	Name       string   `json:"name"`
+	Count      float64  `json:"count"`
+	Cost       float64  `json:"cost"`
+	Price      float64  `json:"price"`
+	Value      float64  `json:"value"`
+	HoldProfit float64  `json:"hold_profit"`
+	HoldRate   float64  `json:"hold_rate"`
+	DayProfit  *float64 `json:"day_profit,omitempty"`
+	DayRate    *float64 `json:"day_rate,omitempty"`
+	WeekProfit float64  `json:"week_profit"`
+}
+
+// BuildFlatJSON 构建扁平表格 JSON 数据
+func (s *RenderService) BuildFlatJSON(rows []PositionRow, ctx *LiveContext) map[string]any {
+	views := make([]FlatView, 0, len(rows))
+	for _, r := range rows {
+		c := ctx
+		if r.Category == "fund" {
+			c = nil
+		}
+		views = append(views, FlatView{
+			Row:      r,
+			LiveView: s.positionService.RecomputePosition(r, c),
+		})
+	}
+
+	showDay := ctx != nil && len(ctx.Quotes) > 0
+	var result []FlatPositionJSON
+	var totalValue, totalProfit, totalDay float64
+	var hasDay bool
+
+	for _, v := range views {
+		r, lv := v.Row, v.LiveView
+		totalValue += lv.Value
+		totalProfit += lv.HoldProfit
+
+		pos := FlatPositionJSON{
+			Account:    r.Account,
+			Category:   api.CategoryLabel(r.Category),
+			Code:       r.Position.Code,
+			Name:       r.Position.Name,
+			Count:      r.Position.Count.F(),
+			Cost:       r.Position.Cost.F(),
+			Price:      lv.Price,
+			Value:      lv.Value,
+			HoldProfit: lv.HoldProfit,
+			HoldRate:   lv.HoldRate,
+			WeekProfit: r.Position.WProfit.F(),
+		}
+
+		if showDay && r.Category != "fund" && lv.DayOK {
+			totalDay += lv.DayProfit
+			hasDay = true
+			pos.DayProfit = &lv.DayProfit
+			pos.DayRate = &lv.DayRate
+		}
+		result = append(result, pos)
+	}
+
+	summary := map[string]any{
+		"value":       totalValue,
+		"hold_profit": totalProfit,
+		"rows":        len(rows),
+	}
+	if hasDay {
+		summary["day_profit"] = totalDay
+	}
+
+	return map[string]any{
+		"positions": result,
+		"summary":   summary,
+	}
+}
+
+// TotalPositionJSON 汇总持仓 JSON 结构
+type TotalPositionJSON struct {
+	Code       string   `json:"code"`
+	Name       string   `json:"name"`
+	Count      float64  `json:"count"`
+	Cost       float64  `json:"cost"`
+	Price      float64  `json:"price"`
+	Value      float64  `json:"value"`
+	HoldProfit float64  `json:"hold_profit"`
+	HoldRate   float64  `json:"hold_rate"`
+	DayProfit  *float64 `json:"day_profit,omitempty"`
+	DayRate    *float64 `json:"day_rate,omitempty"`
+	Accounts   []string `json:"accounts"`
+}
+
+// BuildTotalJSON 构建汇总 JSON 数据
+func (s *RenderService) BuildTotalJSON(merged []MergedPosition, ctx *LiveContext, sortBy string, sortAsc bool) map[string]any {
+	showDay := ctx != nil && len(ctx.Quotes) > 0
+	var result []TotalPositionJSON
+	var totalValue, totalProfit, totalDay float64
+	var hasDay bool
+
+	// 转换为 TotalRowView 并排序
+	views := make([]TotalRowView, 0, len(merged))
+	for _, m := range merged {
+		lv := s.positionService.RecomputeMerged(m, ctx)
+		views = append(views, TotalRowView{
+			Code:       m.Code,
+			Name:       m.Name,
+			Count:      m.Count,
+			Cost:       m.Cost,
+			Price:      lv.Price,
+			Value:      lv.Value,
+			HoldProfit: lv.HoldProfit,
+			HoldRate:   lv.HoldRate,
+			DayProfit:  lv.DayProfit,
+			DayRate:    lv.DayRate,
+			Accounts:   m.Accounts,
+		})
+	}
+	s.positionService.SortTotalViews(views, sortBy, sortAsc)
+
+	for _, v := range views {
+		pos := TotalPositionJSON{
+			Code:       v.Code,
+			Name:       v.Name,
+			Count:      v.Count,
+			Cost:       v.Cost,
+			Price:      v.Price,
+			Value:      v.Value,
+			HoldProfit: v.HoldProfit,
+			HoldRate:   v.HoldRate,
+			Accounts:   v.Accounts,
+		}
+
+		if showDay && v.DayProfit != 0 {
+			pos.DayProfit = &v.DayProfit
+			pos.DayRate = &v.DayRate
+			totalDay += v.DayProfit
+			hasDay = true
+		}
+
+		result = append(result, pos)
+		totalValue += v.Value
+		totalProfit += v.HoldProfit
+	}
+
+	summary := map[string]any{
+		"value":       totalValue,
+		"hold_profit": totalProfit,
+		"count":       len(merged),
+	}
+	if hasDay {
+		summary["day_profit"] = totalDay
+	}
+
+	return map[string]any{
+		"positions": result,
+		"summary":   summary,
+	}
+}
+
+// PrintJSON 输出 JSON（统一入口）
+func (s *RenderService) PrintJSON(data map[string]any) {
+	formatter.PrintJSON(data)
+}
+
+
+// RenderService 持仓渲染服务
+type RenderService struct {
+	positionService *PositionService
+}
+
+// NewRenderService 创建渲染服务
+func NewRenderService(positionService *PositionService) *RenderService {
+	return &RenderService{positionService: positionService}
+}
+
+// AccountGroup 按账户分组的持仓数据
+type AccountGroup struct {
+	Account  string
+	Category string
+	Rows     []PositionRow
+}
+
+// GroupByAccount 按账户分组持仓行
+func (s *RenderService) GroupByAccount(rows []PositionRow) []AccountGroup {
+	var order []string
+	groups := map[string][]PositionRow{}
+	catOf := map[string]string{}
+
+	for _, r := range rows {
+		if _, ok := groups[r.Account]; !ok {
+			order = append(order, r.Account)
+			catOf[r.Account] = r.Category
+		}
+		groups[r.Account] = append(groups[r.Account], r)
+	}
+
+	var result []AccountGroup
+	for _, name := range order {
+		result = append(result, AccountGroup{
+			Account:  name,
+			Category: catOf[name],
+			Rows:     groups[name],
+		})
+	}
+	return result
+}
+
+// AccountSummary 账户汇总数据
+type AccountSummary struct {
+	Value      float64
+	HoldProfit float64
+	DayProfit  float64
+	HasDay     bool
+	Count      int
+}
+
+// ComputeAccountSummary 计算账户汇总
+func (s *RenderService) ComputeAccountSummary(rows []PositionRow, ctx *LiveContext, isFund bool) AccountSummary {
+	var summary AccountSummary
+	summary.Count = len(rows)
+
+	for _, r := range rows {
+		var lv api.LiveView
+		if isFund {
+			lv = s.positionService.RecomputePosition(r, nil)
+		} else {
+			lv = s.positionService.RecomputePosition(r, ctx)
+		}
+		summary.Value += lv.Value
+		summary.HoldProfit += lv.HoldProfit
+		if lv.DayOK {
+			summary.DayProfit += lv.DayProfit
+			summary.HasDay = true
+		}
+	}
+	return summary
+}
+
+// RenderByAccount 按账户渲染持仓
+func (s *RenderService) RenderByAccount(rows []PositionRow, ctx *LiveContext) {
+	groups := s.GroupByAccount(rows)
+	showDay := ctx != nil && len(ctx.Quotes) > 0
+
+	var grandValue, grandProfit, grandDay float64
+	var hasDay bool
+
+	for _, group := range groups {
+		fmt.Printf("\n【%s · %s】\n", group.Account, api.CategoryLabel(group.Category))
+		table := tablewriter.NewWriter(os.Stdout)
+		useLive := showDay && group.Category != "fund"
+
+		if useLive {
+			table.SetHeader([]string{"代码", "名称", "持仓量", "成本价", "现价", "市值", "持仓盈亏", "今日盈亏", "今日涨幅", "收益率"})
+		} else {
+			table.SetHeader([]string{"代码", "名称", "持仓量", "成本价", "现价", "市值", "持仓盈亏", "本周盈亏", "收益率"})
+		}
+		table.SetBorder(true)
+
+		summary := s.ComputeAccountSummary(group.Rows, ctx, group.Category == "fund")
+
+		for _, r := range group.Rows {
+			if useLive {
+				lv := s.positionService.RecomputePosition(r, ctx)
+				table.Append([]string{
+					r.Position.Code, r.Position.Name,
+					fmt.Sprintf("%.0f", r.Position.Count.F()),
+					formatter.PriceStr(r.Position.Cost.F()),
+					formatter.PriceStr(lv.Price),
+					fmt.Sprintf("%.2f", lv.Value),
+					formatter.ColorNum(lv.HoldProfit),
+					formatter.DayStr(lv.DayProfit, lv.DayOK),
+					formatter.RateStr(lv.DayRate, lv.DayOK),
+					formatter.ColorPct(lv.HoldRate),
+				})
+			} else {
+				table.Append(s.renderFundCells(r))
+			}
+		}
+		table.Render()
+
+		grandValue += summary.Value
+		grandProfit += summary.HoldProfit
+		if summary.HasDay {
+			grandDay += summary.DayProfit
+			hasDay = true
+		}
+
+		if summary.HasDay {
+			fmt.Printf("小计  市值: %.2f | 持仓盈亏: %s | 今日盈亏: %s | 标的: %d\n",
+				summary.Value, formatter.ColorNum(summary.HoldProfit), formatter.ColorNum(summary.DayProfit), summary.Count)
+		} else {
+			fmt.Printf("小计  市值: %.2f | 持仓盈亏: %s | 标的: %d\n",
+				summary.Value, formatter.ColorNum(summary.HoldProfit), summary.Count)
+		}
+	}
+
+	fmt.Println()
+	if hasDay {
+		color.New(color.Bold).Printf("合计  市值: %.2f | 持仓盈亏: %s | 今日盈亏: %s | 行数: %d | 账户: %d\n",
+			grandValue, formatter.ColorNum(grandProfit), formatter.ColorNum(grandDay), len(rows), len(groups))
+	} else {
+		color.New(color.Bold).Printf("合计  市值: %.2f | 持仓盈亏: %s | 行数: %d | 账户: %d\n",
+			grandValue, formatter.ColorNum(grandProfit), len(rows), len(groups))
+	}
+}
+
+// renderFundCells 基金/无行情行：不展示今日盈亏列，用接口值（本周盈亏列）
+func (s *RenderService) renderFundCells(r PositionRow) []string {
+	lv := s.positionService.RecomputePosition(r, nil)
+	return []string{
+		r.Position.Code,
+		r.Position.Name,
+		fmt.Sprintf("%.0f", r.Position.Count.F()),
+		formatter.PriceStr(r.Position.Cost.F()),
+		formatter.PriceStr(lv.Price),
+		fmt.Sprintf("%.2f", lv.Value),
+		formatter.ColorNum(lv.HoldProfit),
+		formatter.ColorNum(r.Position.WProfit.F()),
+		formatter.ColorPct(lv.HoldRate),
+	}
+}
+
+// FlatView 扁平视图（单行 + LiveView）
+type FlatView struct {
+	Row      PositionRow
+	LiveView api.LiveView
+}
+
+// RenderFlat 扁平表格渲染
+func (s *RenderService) RenderFlat(rows []PositionRow, ctx *LiveContext) {
+	views := make([]FlatView, 0, len(rows))
+	for _, r := range rows {
+		c := ctx
+		if r.Category == "fund" {
+			c = nil
+		}
+		views = append(views, FlatView{
+			Row:      r,
+			LiveView: s.positionService.RecomputePosition(r, c),
+		})
+	}
+	sort.Slice(views, func(i, j int) bool {
+		return views[i].LiveView.Value > views[j].LiveView.Value
+	})
+
+	showDay := ctx != nil && len(ctx.Quotes) > 0
+	table := tablewriter.NewWriter(os.Stdout)
+	if showDay {
+		table.SetHeader([]string{"账户", "类型", "代码", "名称", "持仓量", "成本价", "现价", "市值", "持仓盈亏", "今日盈亏", "今日涨幅", "收益率"})
+	} else {
+		table.SetHeader([]string{"账户", "类型", "代码", "名称", "持仓量", "成本价", "现价", "市值", "持仓盈亏", "本周盈亏", "收益率"})
+	}
+	table.SetBorder(true)
+
+	var totalValue, totalProfit, totalDay float64
+	var hasDay bool
+	for _, v := range views {
+		r, lv := v.Row, v.LiveView
+		totalValue += lv.Value
+		totalProfit += lv.HoldProfit
+		if showDay && r.Category != "fund" {
+			if lv.DayOK {
+				totalDay += lv.DayProfit
+				hasDay = true
+			}
+			table.Append([]string{
+				r.Account, api.CategoryLabel(r.Category),
+				r.Position.Code, r.Position.Name,
+				fmt.Sprintf("%.0f", r.Position.Count.F()),
+				formatter.PriceStr(r.Position.Cost.F()),
+				formatter.PriceStr(lv.Price),
+				fmt.Sprintf("%.2f", lv.Value),
+				formatter.ColorNum(lv.HoldProfit),
+				formatter.DayStr(lv.DayProfit, lv.DayOK),
+				formatter.RateStr(lv.DayRate, lv.DayOK),
+				formatter.ColorPct(lv.HoldRate),
+			})
+		} else {
+			cells := []string{r.Account, api.CategoryLabel(r.Category)}
+			cells = append(cells, s.renderFundCells(r)...)
+			table.Append(cells)
+		}
+	}
+	table.Render()
+
+	fmt.Println()
+	if hasDay {
+		color.New(color.Bold).Printf("合计  市值: %.2f | 持仓盈亏: %s | 今日盈亏: %s | 行数: %d\n",
+			totalValue, formatter.ColorNum(totalProfit), formatter.ColorNum(totalDay), len(rows))
+	} else {
+		color.New(color.Bold).Printf("合计  市值: %.2f | 持仓盈亏: %s | 行数: %d\n",
+			totalValue, formatter.ColorNum(totalProfit), len(rows))
+	}
+}
+
+
+// RenderTotal 汇总表格渲染
+func (s *RenderService) RenderTotal(merged []MergedPosition, ctx *LiveContext, sortBy string, sortAsc bool) {
+	views := make([]TotalRowView, 0, len(merged))
+	var totalValue, totalProfit, totalDay, totalCount, totalCostBasis, totalSell float64
+	var hasDay bool
+
+	for _, m := range merged {
+		lv := s.positionService.RecomputeMerged(m, ctx)
+		totalValue += lv.Value
+		totalProfit += lv.HoldProfit
+		totalCount += m.Count
+		totalCostBasis += m.Cost * m.Count
+		totalSell += lv.SellAmount
+		if lv.DayOK {
+			totalDay += lv.DayProfit
+			hasDay = true
+		}
+		views = append(views, TotalRowView{
+			Code:       m.Code,
+			Name:       m.Name,
+			Count:      m.Count,
+			Cost:       m.Cost,
+			Price:      lv.Price,
+			Value:      lv.Value,
+			HoldProfit: lv.HoldProfit,
+			HoldRate:   lv.HoldRate,
+			DayProfit:  lv.DayProfit,
+			DayRate:    lv.DayRate,
+			Accounts:   m.Accounts,
+		})
+	}
+
+	s.positionService.SortTotalViews(views, sortBy, sortAsc)
+
+	// 合计「收益率」= 总持仓盈亏 / 总成本
+	totalRate := 0.0
+	if totalCostBasis != 0 {
+		totalRate = totalProfit / totalCostBasis * 100
+	}
+	// 合计行「今日涨幅」= 组合持仓当日盈亏比（相对总市值，非账户总资产）：
+	//   总今日盈亏 / (总市值 − 总今日盈亏 + 总卖出额)
+	// 与单票 drykb 同一套分母；现金不摊薄。账本 now_rate 用总资产，口径不同。
+	totalDayRate := 0.0
+	totalDayRateOK := false
+	if hasDay {
+		den := totalValue - totalDay + totalSell
+		if den != 0 {
+			totalDayRate = totalDay / den * 100
+			totalDayRateOK = true
+		}
+	}
+
+	showDay := ctx != nil && len(ctx.Quotes) > 0
+	table := tablewriter.NewWriter(os.Stdout)
+	if showDay {
+		table.SetHeader([]string{"代码", "名称", "总数量", "均成本", "现价", "总市值", "占比", "持仓盈亏", "今日盈亏", "今日涨幅", "收益率", "账户"})
+	} else {
+		table.SetHeader([]string{"代码", "名称", "总数量", "均成本", "现价", "总市值", "占比", "持仓盈亏", "收益率", "账户"})
+	}
+	table.SetBorder(true)
+	table.SetRowLine(false)
+
+	for _, v := range views {
+		weight := formatter.WeightStr(v.Value, totalValue)
+		dayOK := v.DayProfit != 0 || hasDay
+		rateOK := false
+		if q := s.positionService.QuoteOf(ctx, v.Code); q != nil && q.PrevClose > 0 && v.Price > 0 {
+			rateOK = true
+		}
+		if showDay {
+			table.Append([]string{
+				v.Code,
+				v.Name,
+				fmt.Sprintf("%.0f", v.Count),
+				formatter.PriceStr(v.Cost),
+				formatter.PriceStr(v.Price),
+				fmt.Sprintf("%.2f", v.Value),
+				weight,
+				formatter.ColorNum(v.HoldProfit),
+				formatter.DayStr(v.DayProfit, dayOK),
+				formatter.RateStr(v.DayRate, rateOK),
+				formatter.ColorPct(v.HoldRate),
+				strings.Join(v.Accounts, ","),
+			})
+		} else {
+			table.Append([]string{
+				v.Code,
+				v.Name,
+				fmt.Sprintf("%.0f", v.Count),
+				formatter.PriceStr(v.Cost),
+				formatter.PriceStr(v.Price),
+				fmt.Sprintf("%.2f", v.Value),
+				weight,
+				formatter.ColorNum(v.HoldProfit),
+				formatter.ColorPct(v.HoldRate),
+				strings.Join(v.Accounts, ","),
+			})
+		}
+	}
+
+	if showDay {
+		table.Append([]string{
+			"合计",
+			fmt.Sprintf("%d只", len(merged)),
+			fmt.Sprintf("%.0f", totalCount),
+			"-",
+			"-",
+			fmt.Sprintf("%.2f", totalValue),
+			formatter.WeightStr(totalValue, totalValue),
+			formatter.ColorNum(totalProfit),
+			formatter.DayStr(totalDay, hasDay),
+			formatter.RateStr(totalDayRate, totalDayRateOK),
+			formatter.ColorPct(totalRate),
+			"",
+		})
+	} else {
+		table.Append([]string{
+			"合计",
+			fmt.Sprintf("%d只", len(merged)),
+			fmt.Sprintf("%.0f", totalCount),
+			"-",
+			"-",
+			fmt.Sprintf("%.2f", totalValue),
+			formatter.WeightStr(totalValue, totalValue),
+			formatter.ColorNum(totalProfit),
+			formatter.ColorPct(totalRate),
+			"",
+		})
+	}
+	table.Render()
+}
+

@@ -53,10 +53,10 @@ var tradeSummaryCmd = &cobra.Command{
 	Use:   "summary",
 	Short: "交易汇总",
 	Long: `汇总近 3 个月流水：
-  1) 按账户：买入/卖出金额、净流入、笔数、费用
-  2) 按代码：买入/卖出金额与数量、净买入金额、笔数
+  1) 按账户：买入/卖出金额、净买入、笔数、费用
+  2) 按代码：买入/卖出金额与数量、净买入、笔数
 
-金额口径：买入为资金流出，卖出为资金流入；净流入 = 卖出 − 买入。
+金额口径：净买入 = 买入金额 − 卖出金额（正数=净加仓/净投入，负数=净减仓）。
 逆回购/货基等也会计入对应买卖（与流水 op_name 一致）。`,
 	Run: func(cmd *cobra.Command, args []string) {
 		matched := mustMatchTradeAccounts()
@@ -154,8 +154,9 @@ func (a *tradeAgg) add(r map[string]any) {
 	}
 }
 
-func (a tradeAgg) netIn() float64 { return a.sellAmt - a.buyAmt } // 卖出−买入
-func (a tradeAgg) trades() int    { return a.buyN + a.sellN + a.otherN }
+// netBuy 净买入金额 = 买入 − 卖出。正=净加仓/净投入，负=净减仓。
+func (a tradeAgg) netBuy() float64 { return a.buyAmt - a.sellAmt }
+func (a tradeAgg) trades() int     { return a.buyN + a.sellN + a.otherN }
 
 type accPack struct {
 	acc     api.Account
@@ -165,7 +166,7 @@ type accPack struct {
 func printTradeAccountSummary(packs []accPack) {
 	color.New(color.Bold).Println("【按账户汇总】")
 	table := tablewriter.NewWriter(os.Stdout)
-	table.SetHeader([]string{"账户", "类型", "买入金额", "卖出金额", "净流入", "买笔", "卖笔", "其它", "费用", "总笔数"})
+	table.SetHeader([]string{"账户", "类型", "买入金额", "卖出金额", "净买入", "买笔", "卖笔", "其它", "费用", "总笔数"})
 	table.SetBorder(true)
 	table.SetRowLine(true)
 	table.SetAutoWrapText(false)
@@ -187,7 +188,7 @@ func printTradeAccountSummary(packs []accPack) {
 			api.CategoryLabel(p.acc.Category),
 			fmt.Sprintf("%.2f", a.buyAmt),
 			fmt.Sprintf("%.2f", a.sellAmt),
-			colorNum(a.netIn()),
+			colorNum(a.netBuy()),
 			strconv.Itoa(a.buyN),
 			strconv.Itoa(a.sellN),
 			strconv.Itoa(a.otherN),
@@ -200,7 +201,7 @@ func printTradeAccountSummary(packs []accPack) {
 		"",
 		fmt.Sprintf("%.2f", g.buyAmt),
 		fmt.Sprintf("%.2f", g.sellAmt),
-		colorNum(g.netIn()),
+		colorNum(g.netBuy()),
 		strconv.Itoa(g.buyN),
 		strconv.Itoa(g.sellN),
 		strconv.Itoa(g.otherN),
@@ -249,7 +250,7 @@ func printTradeCodeSummary(all []map[string]any) {
 
 	color.New(color.Bold).Println("【按代码汇总】（按买卖金额合计降序）")
 	table := tablewriter.NewWriter(os.Stdout)
-	table.SetHeader([]string{"代码", "名称", "买入金额", "卖出金额", "净流入", "买量", "卖量", "买笔", "卖笔"})
+	table.SetHeader([]string{"代码", "名称", "买入金额", "卖出金额", "净买入", "买量", "卖量", "买笔", "卖笔"})
 	table.SetBorder(true)
 	table.SetRowLine(true)
 	table.SetAutoWrapText(false)
@@ -264,7 +265,7 @@ func printTradeCodeSummary(all []map[string]any) {
 			r.agg.name,
 			fmt.Sprintf("%.2f", r.agg.buyAmt),
 			fmt.Sprintf("%.2f", r.agg.sellAmt),
-			colorNum(r.agg.netIn()),
+			colorNum(r.agg.netBuy()),
 			fmt.Sprintf("%.0f", r.agg.buyCnt),
 			fmt.Sprintf("%.0f", r.agg.sellCnt),
 			strconv.Itoa(r.agg.buyN),
@@ -283,15 +284,15 @@ func printTradeGrandSummary(all []map[string]any) {
 		g.add(r)
 	}
 	color.New(color.Bold).Printf(
-		"汇总  流水: %d 笔 | 买入: %.2f（%d 笔）| 卖出: %.2f（%d 笔）| 净流入: %s | 费用: %.2f | 其它: %d 笔\n",
+		"汇总  流水: %d 笔 | 买入: %.2f（%d 笔）| 卖出: %.2f（%d 笔）| 净买入: %s | 费用: %.2f | 其它: %d 笔\n",
 		len(all),
 		g.buyAmt, g.buyN,
 		g.sellAmt, g.sellN,
-		colorNum(g.netIn()),
+		colorNum(g.netBuy()),
 		g.fee,
 		g.otherN,
 	)
-	fmt.Println("说明: 净流入 = 卖出金额 − 买入金额；正数表示区间内卖出多于买入（资金回流）。含逆回购滚动。")
+	fmt.Println("说明: 净买入 = 买入金额 − 卖出金额；正数=净加仓/净投入，负数=净减仓。含逆回购滚动。")
 }
 
 // renderRecords 用固定中文列展示流水（字段名随接口映射）。

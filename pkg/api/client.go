@@ -27,6 +27,7 @@ const (
 	epFundCard         = "/caishen_fund/pc/account/v1/fund_card"
 	epGetQuotes        = "/caishen_fund/invest/getQuotes"              // 插件 requestPriceInfo 同源
 	epMergeDayTrading  = "/caishen_fund/pc/account/v1/merge_day_trading" // 当日成交，算今日盈亏用
+	epAssetTrend       = "/caishen_fund/pc/asset/v1/asset_trend"       // 资产趋势曲线
 )
 
 // 当日成交 czdm（与插件 De 常量一致）
@@ -959,4 +960,227 @@ func extractRecords(ex json.RawMessage) []map[string]any {
 		}
 	}
 	return nil
+}
+
+// AssetTrendPoint 是资产趋势曲线的单个数据点。
+type AssetTrendPoint struct {
+	Date         string  `json:"date"`          // 日期 YYYY-MM-DD
+	TotalAsset   float64 `json:"total_asset"`   // 总资产
+	Profit       float64 `json:"profit"`        // 持仓盈亏
+	ProfitRate   float64 `json:"profit_rate"`   // 收益率（小数）
+	Cash         float64 `json:"cash"`          // 现金
+	MarketValue  float64 `json:"market_value"`  // 市值
+	PositionRate float64 `json:"position_rate"` // 仓位（小数）
+}
+
+// GetAssetTrend 拉取账户资产趋势曲线数据。
+// days 指定查询天数，默认 30 天。
+func (c *Client) GetAssetTrend(acc Account, days int) ([]AssetTrendPoint, error) {
+	if days <= 0 {
+		days = 30
+	}
+
+	params := map[string]string{
+		"days": fmt.Sprintf("%d", days),
+	}
+
+	// 按账户类型填充标识参数
+	if acc.Category == "fund" {
+		params["fundid"] = acc.fundID()
+	} else {
+		if acc.ManualID != "" {
+			params["manual_id"] = acc.ManualID
+		}
+		if acc.FundKey != "" {
+			params["fund_key"] = acc.FundKey
+		}
+		if acc.RzrqFundKey != "" {
+			params["rzrq_fund_key"] = acc.RzrqFundKey
+		}
+	}
+
+	ex, err := c.call(epAssetTrend, params)
+	if err != nil {
+		return nil, err
+	}
+
+	// 实际格式: {"total_asset": [...], "month_profit": [...], "year_profit": [...], "month_init_zczs": 938.69, "year_init_zczs": 1000}
+	var wrap struct {
+		TotalAsset     []map[string]any `json:"total_asset"`
+		MonthProfit    []map[string]any `json:"month_profit"`
+		YearProfit     []map[string]any `json:"year_profit"`
+		MonthInitZczs  Num              `json:"month_init_zczs"`
+		YearInitZczs   Num              `json:"year_init_zczs"`
+	}
+	if err := json.Unmarshal(ex, &wrap); err == nil {
+		// 根据 days 参数决定用哪个数据集和对应的基准
+		var data []map[string]any
+		var initZczs float64
+
+		if days <= 31 && len(wrap.MonthProfit) > 0 {
+			// 近一个月用 month_profit
+			data = wrap.MonthProfit
+			initZczs = wrap.MonthInitZczs.F()
+		} else if len(wrap.TotalAsset) > 0 {
+			// 默认用 total_asset（最近 30 天完整数据）
+			data = wrap.TotalAsset
+			// total_asset 跨月，用 month_init_zczs
+			initZczs = wrap.MonthInitZczs.F()
+		} else if len(wrap.YearProfit) > 0 {
+			// 回退到 year_profit
+			data = wrap.YearProfit
+			initZczs = wrap.YearInitZczs.F()
+		}
+
+		if len(data) > 0 {
+			if initZczs == 0 {
+				initZczs = 1000 // 默认基准
+			}
+			return parseAssetTrendData(data, initZczs), nil
+		}
+	}
+
+	// 兼容其他格式
+	var wrap2 struct {
+		Data []map[string]any `json:"data"`
+		List []map[string]any `json:"list"`
+	}
+	if err := json.Unmarshal(ex, &wrap2); err == nil {
+		if len(wrap2.Data) > 0 {
+			return parseAssetTrendData(wrap2.Data, 1000), nil
+		}
+		if len(wrap2.List) > 0 {
+			return parseAssetTrendData(wrap2.List, 1000), nil
+		}
+	}
+
+	return nil, nil
+}
+
+// parseAssetTrendData 从原始 map 数组解析成 AssetTrendPoint。
+// initZczs 是收益率计算基准（如 938.69 或 1000）。
+func parseAssetTrendData(raw []map[string]any, initZczs float64) []AssetTrendPoint {
+	var points []AssetTrendPoint
+
+	for _, m := range raw {
+		p := AssetTrendPoint{}
+
+		// 日期字段：date / time / day
+		if v, ok := m["date"]; ok {
+			dateStr := fmt.Sprintf("%v", v)
+			// 转换 20260622 → 2026-06-22
+			if len(dateStr) == 8 {
+				p.Date = dateStr[0:4] + "-" + dateStr[4:6] + "-" + dateStr[6:8]
+			} else {
+				p.Date = dateStr
+			}
+		} else if v, ok := m["time"]; ok {
+			p.Date = fmt.Sprintf("%v", v)
+		} else if v, ok := m["day"]; ok {
+			p.Date = fmt.Sprintf("%v", v)
+		}
+
+		// 总资产：asset / total_asset / total_assets
+		p.TotalAsset = parseFloat(m, "asset", "total_asset", "total_assets", "totalAsset")
+
+		// 盈亏：profit / hold_profit / total_profit
+		p.Profit = parseFloat(m, "profit", "hold_profit", "total_profit")
+
+		// 收益率：从 zczs（增长指数）计算
+		// zczs 是以基准（month_init_zczs 或 1000）为基准的指数
+		// 收益率 = (zczs - initZczs) / initZczs
+		if zczs := parseFloat(m, "zczs"); zczs > 0 && initZczs > 0 {
+			p.ProfitRate = (zczs - initZczs) / initZczs
+		} else {
+			// 回退：profit_rate / rate / return_rate
+			rate := parseFloat(m, "profit_rate", "rate", "return_rate", "profitRate")
+			if rate > 1 || rate < -1 {
+				rate = rate / 100
+			}
+			p.ProfitRate = rate
+		}
+
+		// 资金流入流出
+		fundIn := parseFloat(m, "fundIn", "fund_in")
+		fundOut := parseFloat(m, "fundOut", "fund_out")
+
+		// 现金：从 asset - profit 估算（如果没有直接字段）
+		cash := parseFloat(m, "cash", "money_remain", "available", "moneyRemain")
+		if cash == 0 && p.TotalAsset > 0 {
+			// 估算：现金 = 总资产 - 市值
+			// 但我们还不知道市值，先留 0
+		}
+		p.Cash = cash
+
+		// 市值：优先 market_value，否则从资产和现金推算
+		marketValue := parseFloat(m, "market_value", "value", "total_value", "marketValue")
+		if marketValue == 0 && p.TotalAsset > 0 {
+			// 如果有资金流入流出，调整后的市值
+			if fundIn > 0 || fundOut > 0 {
+				// 简化：不考虑资金流，直接用总资产作为市值近似
+				marketValue = p.TotalAsset
+			} else if cash > 0 {
+				marketValue = p.TotalAsset - cash
+			} else {
+				// 假设全仓
+				marketValue = p.TotalAsset
+			}
+		}
+		p.MarketValue = marketValue
+
+		// 现金回填（如果之前为 0）
+		if p.Cash == 0 && p.TotalAsset > 0 && p.MarketValue > 0 {
+			p.Cash = p.TotalAsset - p.MarketValue
+		}
+
+		// 仓位：position_rate / position（小数或百分比）
+		pos := parseFloat(m, "position_rate", "position", "positionRate")
+		if pos > 1 {
+			pos = pos / 100
+		}
+		// 如果没有仓位字段，从市值和总资产计算
+		if pos == 0 && p.TotalAsset > 0 && p.MarketValue > 0 {
+			pos = p.MarketValue / p.TotalAsset
+		}
+		p.PositionRate = pos
+
+		points = append(points, p)
+	}
+
+	return points
+}
+
+// parseFloat 从 map 中按候选键顺序提取第一个非零数值。
+func parseFloat(m map[string]any, keys ...string) float64 {
+	for _, k := range keys {
+		v, ok := m[k]
+		if !ok || v == nil {
+			continue
+		}
+
+		switch x := v.(type) {
+		case float64:
+			return x
+		case float32:
+			return float64(x)
+		case int:
+			return float64(x)
+		case int64:
+			return float64(x)
+		case json.Number:
+			f, _ := x.Float64()
+			return f
+		case string:
+			s := strings.TrimSpace(x)
+			s = strings.ReplaceAll(s, ",", "")
+			if s == "" || s == "null" {
+				continue
+			}
+			f, err := strconv.ParseFloat(s, 64)
+			if err == nil {
+				return f
+			}
+		}
+	}
+	return 0
 }

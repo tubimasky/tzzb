@@ -347,7 +347,7 @@ else:
     otherN++
 
 name 取第一条非空 r["name"]
-净流入 = sellAmt - buyAmt
+净买入 = buyAmt - sellAmt   // 正=净加仓/净投入，负=净减仓
 ```
 
 `mapFloat` 解析顺序：`float64` / `float32` / `int` / `int64` / `json.Number` / 去逗号后的数字字符串；失败当 0。
@@ -367,11 +367,118 @@ summary 跨账户时会在 map 上临时写 `_account`（仅内存；步骤 4 �
 | 无强类型 Trade 结构体 | 全程 `map[string]any`，字段名以接口为准 |
 | 分类主键是中文 `op_name` | 用 `Contains("买"/"卖"/"银行")`，不是枚举 code |
 | 逆回购算买卖 | `204001`/`131810` 等 op 仍是买入/卖出，会撑大区间买卖总额 |
-| 净流入 | 卖出金额 − 买入金额；负 = 净投入 |
+| 净买入 | 买入金额 − 卖出金额；正 = 净加仓/净投入，负 = 净减仓（标的视角，非账户现金回流） |
 | 费用 | 每条都加，与买卖/银证归类独立 |
 | 分页上限 | 最多 20 页 × 100 = 2000 条/账户 |
 
-### 3.7 其它已知但未接入的接口
+### 3.7 asset_trend — 资产趋势曲线
+
+- **path**: `/caishen_fund/pc/asset/v1/asset_trend`
+- **参数**: `days`（天数，默认 30）+ 账户标识（`manual_id` / `fund_key` / `rzrq_fund_key` / `fundid`）
+- **用途**: 获取账户的资产趋势历史数据，用于绘制收益走势图。
+
+`ex_data` 结构：
+
+```json
+{
+  "total_asset": [     // 近 30 天完整数据
+    {
+      "date": "20260622",       // 日期（YYYYMMDD 格式）
+      "asset": 379733.38,       // 总资产
+      "profit": 559.50,         // 持仓盈亏（相对基准日）
+      "zczs": 956.28,           // 增长指数（以基准为 1000 或基准值）
+      "fundIn": 0,              // 资金转入
+      "fundOut": 0              // 资金转出
+    },
+    ...
+  ],
+  "month_profit": [   // 本月数据（相对月初）
+    {
+      "date": "20260701",
+      "asset": 395940.27,
+      "profit": 3189.79,        // 7月1日相对 6月30日的盈亏增量
+      "zczs": 948.58,
+      "fundIn": 0,
+      "fundOut": 0
+    },
+    ...
+  ],
+  "year_profit": [    // 年度数据（相对年初或建仓日）
+    {
+      "date": "20260717",
+      "asset": 494237.52,
+      "profit": -22300.01,      // 相对年初的累计盈亏
+      "zczs": 945.89,
+      "fundIn": 0,
+      "fundOut": 0
+    },
+    ...
+  ],
+  "month_init_zczs": 938.69,   // 月初基准指数
+  "year_init_zczs": 1000        // 年初基准指数
+}
+```
+
+**重要字段说明**：
+
+| 字段 | 含义 | 计算方式 |
+|---|---|---|
+| `date` | 日期 | YYYYMMDD 格式，需转换为 YYYY-MM-DD |
+| `asset` | 总资产 | 当日收盘总资产 |
+| `profit` | 盈亏 | **相对基准日**的盈亏增量（不是总盈亏） |
+| `zczs` | 增长指数 | 以基准为 1000 的归一化指数 |
+| `fundIn` / `fundOut` | 资金流 | 当日转入/转出金额 |
+
+**数据集选择逻辑**：
+
+| 查询天数 | 优先使用 | 基准指数 | 说明 |
+|---|---|---|---|
+| `days <= 31` | `month_profit` | `month_init_zczs` | 本月数据，`profit` 是相对月初的增量 |
+| `days > 31` | `total_asset` | `month_init_zczs` | 近 30 天完整数据 |
+| 回退 | `year_profit` | `year_init_zczs` | 年度数据，`profit` 是相对年初的累计盈亏 |
+
+**收益率计算**：
+
+```
+收益率 = (zczs - initZczs) / initZczs
+```
+
+例如：`zczs = 956.28`，`month_init_zczs = 938.69`
+```
+收益率 = (956.28 - 938.69) / 938.69 = 0.0187 = 1.87%
+```
+
+**CLI 实现**：
+
+```go
+// pkg/api/client.go
+type AssetTrendPoint struct {
+    Date         string  // 日期 YYYY-MM-DD
+    TotalAsset   float64 // 总资产
+    Profit       float64 // 盈亏（相对基准）
+    ProfitRate   float64 // 收益率（小数）
+    Cash         float64 // 现金
+    MarketValue  float64 // 市值
+    PositionRate float64 // 仓位（小数）
+}
+
+func (c *Client) GetAssetTrend(acc Account, days int) ([]AssetTrendPoint, error)
+```
+
+**注意事项**：
+
+1. **`profit` 不是总盈亏**：
+   - `month_profit` 里的 `profit` 是**月内增量**（相对 6月30日）
+   - 要看总盈亏，需要用 `year_profit` 或账户级 `card.profit`
+   
+2. **日期格式转换**：
+   - API 返回 `20260622`，需转换为 `2026-06-22`
+   
+3. **现金/市值推算**：
+   - API 不直接返回现金和市值
+   - 市值 ≈ 总资产（假设全仓）或 总资产 - 现金
+
+### 3.8 其它已知但未接入的接口
 
 从插件 JS 里扒到的全部端点（`/caishen_fund/...`），未接入的可按需开发：
 
@@ -386,8 +493,7 @@ pc/account/v1/status                        pc/account/v1/status_fund
 pc/account/v1/merge_day_trading             pc/account/v1/delete_money_history
 pc/account/v1/edit_money_history            pc/account/v1/add_money_history
 pc/account/v1/edit_stock_position_history
-pc/asset/v1/asset_trend                     pc/asset/v1/fund_quota
-pc/asset/v1/merge_compare
+pc/asset/v1/fund_quota                      pc/asset/v1/merge_compare
 pc/asset/v1/query_bank_history              pc/asset/v1/add_bank_history
 pc/asset/v1/add_stock_position              pc/asset/v1/clear_stock
 pc/asset/v1/delete_stock                    pc/asset/v1/time_share
@@ -395,8 +501,7 @@ pc/stock/v1/query_suspension_code           stock_common/v1/hk_rate
 stock_common/v1/last_trading_day
 ```
 
-> 已接入：`account_list` / `stock_position` / `fund_position` / `stock_card` / `fund_card` / `get_money_history`。
-> `asset_trend` 看名字应该是资产趋势曲线，做收益趋势图时优先验证它。
+> 已接入：`account_list` / `stock_position` / `fund_position` / `stock_card` / `fund_card` / `get_money_history` / `asset_trend`。
 
 ---
 
@@ -507,10 +612,23 @@ tzzb account list                    # 账户列表 + 汇总
 tzzb position list                   # 全部持仓
 tzzb position list -a 华宝           # 按账户名模糊过滤
 tzzb profit summary                  # 收益汇总
+tzzb trend show                      # 资产趋势（默认 30 天）
+tzzb trend show -a 国 -d 7           # 过滤账户，查看 7 天趋势
+
+# 交易流水
+tzzb trade list                      # 交易明细（近 3 个月）
+tzzb trade summary                   # 交易汇总（按账户、按代码）
 
 # 导出（CSV 带 UTF-8 BOM，Excel 打开中文不乱码）
 tzzb export account  -f csv  -o 账户.csv
 tzzb export position -f json -o 持仓.json
+
+# Makefile 快捷命令
+make account                         # = tzzb account list
+make position                        # = tzzb position list
+make profit                          # = tzzb profit summary
+make trend                           # = tzzb trend show
+make install                         # 安装到 ~/go/bin/tzzb
 ```
 
 > `login` 卡住的根因：macOS 终端规范模式下单行输入约 1024 字节上限，Cookie 远超此值。

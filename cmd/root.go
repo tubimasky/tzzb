@@ -33,4 +33,5 @@ func init() {
 	rootCmd.AddCommand(tradeCmd)
 	rootCmd.AddCommand(profitCmd)
 	rootCmd.AddCommand(exportCmd)
+	rootCmd.AddCommand(trendCmd)
 }

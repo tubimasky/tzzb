@@ -11,7 +11,7 @@ PLATFORMS := \
 	windows/amd64
 
 .PHONY: all build install uninstall clean run fmt tidy vet test help \
-	account position profit build-all
+	account position profit trend build-all
 
 all: build
 
@@ -19,9 +19,12 @@ all: build
 build:
 	go build -trimpath -ldflags "$(LDFLAGS)" -o $(APP) .
 
-## install: 安装到 $(go env GOPATH)/bin
+## install: 安装到 ~/go/bin (或 $(GOPATH)/bin)
 install:
-	go install -trimpath -ldflags "$(LDFLAGS)" .
+	@mkdir -p ~/go/bin
+	go build -trimpath -ldflags "$(LDFLAGS)" -o ~/go/bin/$(APP) .
+	@echo "✓ 已安装到 ~/go/bin/$(APP)"
+	@echo "确保 ~/go/bin 在你的 PATH 中"
 
 ## uninstall: 删除 $(GOPATH)/bin/tzzb
 uninstall:
@@ -53,7 +56,7 @@ vet:
 test:
 	go test ./...
 
-## account / position / profit: 常用命令快捷入口
+## account / position / profit / trend: 常用命令快捷入口
 account: build
 	./$(APP) account list
 
@@ -62,6 +65,9 @@ position: build
 
 profit: build
 	./$(APP) profit summary
+
+trend: build
+	./$(APP) trend show
 
 ## build-all: 交叉编译到 dist/
 build-all: clean
@@ -87,3 +93,4 @@ help:
 	@echo "  make install"
 	@echo "  make run ARGS='position stock'"
 	@echo "  make account"
+	@echo "  make trend"

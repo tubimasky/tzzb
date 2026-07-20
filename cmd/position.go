@@ -1,12 +1,8 @@
 package cmd
 
 import (
-	"fmt"
-	"os"
-
 	"github.com/spf13/cobra"
 
-	"github.com/liyanran/tzzb-cli/internal/formatter"
 	"github.com/liyanran/tzzb-cli/internal/service"
 )
 
@@ -28,6 +24,10 @@ func getRenderService() *service.RenderService {
 	return service.NewRenderService(getPositionService())
 }
 
+func getPositionCommandService() *service.PositionCommandService {
+	return service.NewPositionCommandService(getPositionService(), getRenderService())
+}
+
 var positionCmd = &cobra.Command{
 	Use:   "position",
 	Short: "持仓管理",
@@ -45,36 +45,8 @@ var positionListCmd = &cobra.Command{
 	Short: "按账户查看持仓明细",
 	Long:  `默认按账户分块展示；加 --flat 打成一张大表（带账户列）。股票行按插件口径重算实时今日盈亏。`,
 	Run: func(cmd *cobra.Command, args []string) {
-		svc := getPositionService()
-		accounts, err := svc.LoadAccounts()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "加载账户失败: %v\n", err)
-			os.Exit(1)
-		}
-		rows := svc.CollectRows(accounts, filterAccount, filterType)
-		if len(rows) == 0 {
-			if outputJSON {
-				formatter.PrintJSON([]any{})
-			} else {
-				fmt.Println("暂无持仓")
-			}
-			return
-		}
-		ctx := svc.LoadLiveContext(accounts, rows)
-		renderSvc := getRenderService()
-		if outputJSON {
-			if flatList {
-				renderSvc.PrintJSON(renderSvc.BuildFlatJSON(rows, ctx))
-			} else {
-				renderSvc.PrintJSON(renderSvc.BuildByAccountJSON(rows, ctx))
-			}
-			return
-		}
-		if flatList {
-			renderSvc.RenderFlat(rows, ctx)
-			return
-		}
-		renderSvc.RenderByAccount(rows, ctx)
+		cmdSvc := getPositionCommandService()
+		cmdSvc.ExecuteListCommand(filterAccount, filterType, flatList, outputJSON)
 	},
 }
 
@@ -86,29 +58,8 @@ var positionTotalCmd = &cobra.Command{
 排序（-s/--sort）: value(默认) day hold rate dayrate code name count
 升序加 --asc，默认降序。`,
 	Run: func(cmd *cobra.Command, args []string) {
-		svc := getPositionService()
-		accounts, err := svc.LoadAccounts()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "加载账户失败: %v\n", err)
-			os.Exit(1)
-		}
-		rows := svc.CollectRows(accounts, filterAccount, filterType)
-		if len(rows) == 0 {
-			if outputJSON {
-				formatter.PrintJSON([]any{})
-			} else {
-				fmt.Println("暂无持仓")
-			}
-			return
-		}
-		ctx := svc.LoadLiveContext(accounts, rows)
-		merged := svc.MergeByCode(rows)
-		renderSvc := getRenderService()
-		if outputJSON {
-			renderSvc.PrintJSON(renderSvc.BuildTotalJSON(merged, ctx, sortBy, sortAsc))
-			return
-		}
-		renderSvc.RenderTotal(merged, ctx, sortBy, sortAsc)
+		cmdSvc := getPositionCommandService()
+		cmdSvc.ExecuteTotalCommand(filterAccount, filterType, sortBy, sortAsc, outputJSON, true)
 	},
 }
 
@@ -126,29 +77,8 @@ var positionStockCmd = &cobra.Command{
   tzzb position stock -s hold --asc
   tzzb position stock -s dayrate`,
 	Run: func(cmd *cobra.Command, args []string) {
-		svc := getPositionService()
-		accounts, err := svc.LoadAccounts()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "加载账户失败: %v\n", err)
-			os.Exit(1)
-		}
-		rows := svc.CollectRows(accounts, filterAccount, "stock")
-		if len(rows) == 0 {
-			if outputJSON {
-				formatter.PrintJSON([]any{})
-			} else {
-				fmt.Println("暂无股票/ETF 持仓")
-			}
-			return
-		}
-		ctx := svc.LoadLiveContext(accounts, rows)
-		merged := svc.MergeByCode(rows)
-		renderSvc := getRenderService()
-		if outputJSON {
-			renderSvc.PrintJSON(renderSvc.BuildTotalJSON(merged, ctx, sortBy, sortAsc))
-			return
-		}
-		renderSvc.RenderTotal(merged, ctx, sortBy, sortAsc)
+		cmdSvc := getPositionCommandService()
+		cmdSvc.ExecuteTotalCommand(filterAccount, "stock", sortBy, sortAsc, outputJSON, true)
 	},
 }
 
@@ -160,28 +90,8 @@ var positionFundCmd = &cobra.Command{
 排序（-s/--sort）: value(默认) hold rate code name count
 升序加 --asc。`,
 	Run: func(cmd *cobra.Command, args []string) {
-		svc := getPositionService()
-		accounts, err := svc.LoadAccounts()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "加载账户失败: %v\n", err)
-			os.Exit(1)
-		}
-		rows := svc.CollectRows(accounts, filterAccount, "fund")
-		if len(rows) == 0 {
-			if outputJSON {
-				formatter.PrintJSON([]any{})
-			} else {
-				fmt.Println("暂无基金持仓")
-			}
-			return
-		}
-		merged := svc.MergeByCode(rows)
-		renderSvc := getRenderService()
-		if outputJSON {
-			renderSvc.PrintJSON(renderSvc.BuildTotalJSON(merged, nil, sortBy, sortAsc))
-			return
-		}
-		renderSvc.RenderTotal(merged, nil, sortBy, sortAsc)
+		cmdSvc := getPositionCommandService()
+		cmdSvc.ExecuteTotalCommand(filterAccount, "fund", sortBy, sortAsc, outputJSON, false)
 	},
 }
 
@@ -201,5 +111,3 @@ func init() {
 		c.Flags().StringVarP(&filterAccount, "account", "a", "", "按账户名过滤（模糊匹配）")
 	}
 }
-
-

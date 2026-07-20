@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/liyanran/tzzb-cli/internal/cli"
 	"github.com/spf13/cobra"
 )
 
@@ -41,8 +42,7 @@ var loginCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		cookie, err := readCookie()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "读取 Cookie 失败: %v\n", err)
-			os.Exit(1)
+			cli.HandleError(err, "读取 Cookie 失败")
 		}
 
 		cookie = strings.TrimSpace(cookie)
@@ -52,8 +52,7 @@ var loginCmd = &cobra.Command{
 		}
 
 		if err := apiClient.SaveCookies(cookie); err != nil {
-			fmt.Fprintf(os.Stderr, "保存 Cookie 失败: %v\n", err)
-			os.Exit(1)
+			cli.HandleError(err, "保存 Cookie 失败")
 		}
 
 		fmt.Println("✓ 登录成功！Cookie 已保存到 ~/.tzzb/cookies")

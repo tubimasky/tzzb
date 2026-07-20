@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/liyanran/tzzb-cli/internal/cli"
 	"github.com/liyanran/tzzb-cli/pkg/api"
 )
 
@@ -29,8 +30,7 @@ var exportAccountCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		accounts, err := apiClient.GetAccountList()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "获取账户失败: %v\n", err)
-			os.Exit(1)
+			cli.HandleError(err, "获取账户失败")
 		}
 		if len(accounts) == 0 {
 			fmt.Println("暂无账户")
@@ -41,8 +41,7 @@ var exportAccountCmd = &cobra.Command{
 		switch exportFormat {
 		case "json":
 			if err := writeJSON(accounts, out); err != nil {
-				fmt.Fprintf(os.Stderr, "导出失败: %v\n", err)
-				os.Exit(1)
+				cli.HandleError(err, "导出失败")
 			}
 		case "csv":
 			rows := [][]string{{"账户", "类型", "本金", "总资产", "持仓盈亏", "当日盈亏", "总盈亏", "仓位"}}
@@ -55,8 +54,7 @@ var exportAccountCmd = &cobra.Command{
 				})
 			}
 			if err := writeCSV(rows, out); err != nil {
-				fmt.Fprintf(os.Stderr, "导出失败: %v\n", err)
-				os.Exit(1)
+				cli.HandleError(err, "导出失败")
 			}
 		default:
 			fmt.Fprintf(os.Stderr, "不支持的格式: %s（支持 csv/json）\n", exportFormat)
@@ -113,8 +111,7 @@ var exportPositionCmd = &cobra.Command{
 				})
 			}
 			if err := writeCSV(rows, out); err != nil {
-				fmt.Fprintf(os.Stderr, "导出失败: %v\n", err)
-				os.Exit(1)
+				cli.HandleError(err, "导出失败")
 			}
 		default:
 			fmt.Fprintf(os.Stderr, "不支持的格式: %s（支持 csv/json）\n", exportFormat)

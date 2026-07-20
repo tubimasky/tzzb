@@ -2,11 +2,11 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 
+	"github.com/liyanran/tzzb-cli/internal/cli"
 	"github.com/liyanran/tzzb-cli/internal/formatter"
 	"github.com/liyanran/tzzb-cli/pkg/api"
 )
@@ -24,8 +24,7 @@ var profitSummaryCmd = &cobra.Command{
 		// 获取账户列表
 		accounts, err := accountService.GetAccountList()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "获取收益数据失败: %v\n", err)
-			os.Exit(1)
+			cli.HandleError(err, "获取收益数据失败")
 		}
 
 		if len(accounts) == 0 {

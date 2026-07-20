@@ -7,9 +7,9 @@ import (
 	"strings"
 
 	"github.com/fatih/color"
+	"github.com/liyanran/tzzb-cli/internal/cli"
 	"github.com/liyanran/tzzb-cli/internal/formatter"
 	"github.com/liyanran/tzzb-cli/pkg/api"
-	"github.com/olekukonko/tablewriter"
 )
 
 // PositionService 持仓业务逻辑层
@@ -383,8 +383,7 @@ func NewPositionCommandService(positionSvc *PositionService, renderSvc *RenderSe
 func (s *PositionCommandService) ExecuteListCommand(accountFilter, typeFilter string, flatList, outputJSON bool) {
 	accounts, err := s.positionSvc.LoadAccounts()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "加载账户失败: %v\n", err)
-		os.Exit(1)
+		cli.HandleError(err, "加载账户失败")
 	}
 	rows := s.positionSvc.CollectRows(accounts, accountFilter, typeFilter)
 	if len(rows) == 0 {
@@ -415,8 +414,7 @@ func (s *PositionCommandService) ExecuteListCommand(accountFilter, typeFilter st
 func (s *PositionCommandService) ExecuteTotalCommand(accountFilter, typeFilter, sortBy string, sortAsc, outputJSON bool, withLiveContext bool) {
 	accounts, err := s.positionSvc.LoadAccounts()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "加载账户失败: %v\n", err)
-		os.Exit(1)
+		cli.HandleError(err, "加载账户失败")
 	}
 	rows := s.positionSvc.CollectRows(accounts, accountFilter, typeFilter)
 	if len(rows) == 0 {
@@ -811,22 +809,22 @@ func (s *RenderService) RenderByAccount(rows []PositionRow, ctx *LiveContext) {
 
 	for _, group := range groups {
 		fmt.Printf("\n【%s · %s】\n", group.Account, api.CategoryLabel(group.Category))
-		table := tablewriter.NewWriter(os.Stdout)
 		useLive := showDay && group.Category != "fund"
 
+		var headers []string
 		if useLive {
-			table.SetHeader([]string{"代码", "名称", "持仓量", "成本价", "现价", "市值", "持仓盈亏", "今日盈亏", "今日涨幅", "收益率"})
+			headers = []string{"代码", "名称", "持仓量", "成本价", "现价", "市值", "持仓盈亏", "今日盈亏", "今日涨幅", "收益率"}
 		} else {
-			table.SetHeader([]string{"代码", "名称", "持仓量", "成本价", "现价", "市值", "持仓盈亏", "本周盈亏", "收益率"})
+			headers = []string{"代码", "名称", "持仓量", "成本价", "现价", "市值", "持仓盈亏", "本周盈亏", "收益率"}
 		}
-		table.SetBorder(true)
 
 		summary := s.ComputeAccountSummary(group.Rows, ctx, group.Category == "fund")
 
+		var rows [][]string
 		for _, r := range group.Rows {
 			if useLive {
 				lv := s.positionService.RecomputePosition(r, ctx)
-				table.Append([]string{
+				rows = append(rows, []string{
 					r.Position.Code, r.Position.Name,
 					fmt.Sprintf("%.0f", r.Position.Count.F()),
 					formatter.PriceStr(r.Position.Cost.F()),
@@ -838,10 +836,11 @@ func (s *RenderService) RenderByAccount(rows []PositionRow, ctx *LiveContext) {
 					formatter.ColorPct(lv.HoldRate),
 				})
 			} else {
-				table.Append(s.renderFundCells(r))
+				rows = append(rows, s.renderFundCells(r))
 			}
 		}
-		table.Render()
+
+		formatter.RenderTable(headers, rows, formatter.WithBorder(true))
 
 		grandValue += summary.Value
 		grandProfit += summary.HoldProfit
@@ -909,14 +908,14 @@ func (s *RenderService) RenderFlat(rows []PositionRow, ctx *LiveContext) {
 	})
 
 	showDay := ctx != nil && len(ctx.Quotes) > 0
-	table := tablewriter.NewWriter(os.Stdout)
+	var headers []string
 	if showDay {
-		table.SetHeader([]string{"账户", "类型", "代码", "名称", "持仓量", "成本价", "现价", "市值", "持仓盈亏", "今日盈亏", "今日涨幅", "收益率"})
+		headers = []string{"账户", "类型", "代码", "名称", "持仓量", "成本价", "现价", "市值", "持仓盈亏", "今日盈亏", "今日涨幅", "收益率"}
 	} else {
-		table.SetHeader([]string{"账户", "类型", "代码", "名称", "持仓量", "成本价", "现价", "市值", "持仓盈亏", "本周盈亏", "收益率"})
+		headers = []string{"账户", "类型", "代码", "名称", "持仓量", "成本价", "现价", "市值", "持仓盈亏", "本周盈亏", "收益率"}
 	}
-	table.SetBorder(true)
 
+	var tableRows [][]string
 	var totalValue, totalProfit, totalDay float64
 	var hasDay bool
 	for _, v := range views {
@@ -928,7 +927,7 @@ func (s *RenderService) RenderFlat(rows []PositionRow, ctx *LiveContext) {
 				totalDay += lv.DayProfit
 				hasDay = true
 			}
-			table.Append([]string{
+			tableRows = append(tableRows, []string{
 				r.Account, api.CategoryLabel(r.Category),
 				r.Position.Code, r.Position.Name,
 				fmt.Sprintf("%.0f", r.Position.Count.F()),
@@ -943,10 +942,11 @@ func (s *RenderService) RenderFlat(rows []PositionRow, ctx *LiveContext) {
 		} else {
 			cells := []string{r.Account, api.CategoryLabel(r.Category)}
 			cells = append(cells, s.renderFundCells(r)...)
-			table.Append(cells)
+			tableRows = append(tableRows, cells)
 		}
 	}
-	table.Render()
+
+	formatter.RenderTable(headers, tableRows, formatter.WithBorder(true))
 
 	fmt.Println()
 	if hasDay {
@@ -1012,15 +1012,14 @@ func (s *RenderService) RenderTotal(merged []MergedPosition, ctx *LiveContext, s
 	}
 
 	showDay := ctx != nil && len(ctx.Quotes) > 0
-	table := tablewriter.NewWriter(os.Stdout)
+	var headers []string
 	if showDay {
-		table.SetHeader([]string{"代码", "名称", "总数量", "均成本", "现价", "总市值", "占比", "持仓盈亏", "今日盈亏", "今日涨幅", "收益率", "账户"})
+		headers = []string{"代码", "名称", "总数量", "均成本", "现价", "总市值", "占比", "持仓盈亏", "今日盈亏", "今日涨幅", "收益率", "账户"}
 	} else {
-		table.SetHeader([]string{"代码", "名称", "总数量", "均成本", "现价", "总市值", "占比", "持仓盈亏", "收益率", "账户"})
+		headers = []string{"代码", "名称", "总数量", "均成本", "现价", "总市值", "占比", "持仓盈亏", "收益率", "账户"}
 	}
-	table.SetBorder(true)
-	table.SetRowLine(false)
 
+	var tableRows [][]string
 	for _, v := range views {
 		weight := formatter.WeightStr(v.Value, totalValue)
 		dayOK := v.DayProfit != 0 || hasDay
@@ -1029,7 +1028,7 @@ func (s *RenderService) RenderTotal(merged []MergedPosition, ctx *LiveContext, s
 			rateOK = true
 		}
 		if showDay {
-			table.Append([]string{
+			tableRows = append(tableRows, []string{
 				v.Code,
 				v.Name,
 				fmt.Sprintf("%.0f", v.Count),
@@ -1044,7 +1043,7 @@ func (s *RenderService) RenderTotal(merged []MergedPosition, ctx *LiveContext, s
 				strings.Join(v.Accounts, ","),
 			})
 		} else {
-			table.Append([]string{
+			tableRows = append(tableRows, []string{
 				v.Code,
 				v.Name,
 				fmt.Sprintf("%.0f", v.Count),
@@ -1060,7 +1059,7 @@ func (s *RenderService) RenderTotal(merged []MergedPosition, ctx *LiveContext, s
 	}
 
 	if showDay {
-		table.Append([]string{
+		tableRows = append(tableRows, []string{
 			"合计",
 			fmt.Sprintf("%d只", len(merged)),
 			fmt.Sprintf("%.0f", totalCount),
@@ -1075,7 +1074,7 @@ func (s *RenderService) RenderTotal(merged []MergedPosition, ctx *LiveContext, s
 			"",
 		})
 	} else {
-		table.Append([]string{
+		tableRows = append(tableRows, []string{
 			"合计",
 			fmt.Sprintf("%d只", len(merged)),
 			fmt.Sprintf("%.0f", totalCount),
@@ -1088,6 +1087,7 @@ func (s *RenderService) RenderTotal(merged []MergedPosition, ctx *LiveContext, s
 			"",
 		})
 	}
-	table.Render()
+
+	formatter.RenderTable(headers, tableRows, formatter.WithBorder(true), formatter.WithRowLine(false))
 }
 

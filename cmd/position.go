@@ -790,9 +790,9 @@ func rateStr(v float64, ok bool) string {
 
 func colorPct(v float64) string {
 	if v < 0 {
-		return color.New(color.FgGreen).Sprintf("%.2f%%", v)
+		return color.New(color.FgRed).Sprintf("%.2f%%", v*100)
 	}
-	return color.New(color.FgRed).Sprintf("%.2f%%", v)
+	return color.New(color.FgGreen).Sprintf("%.2f%%", v*100)
 }
 
 func init() {

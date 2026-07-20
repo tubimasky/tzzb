@@ -1013,6 +1013,12 @@ func (c *Client) GetAssetTrend(acc Account, days int) ([]AssetTrendPoint, error)
 		YearInitZczs   Num              `json:"year_init_zczs"`
 	}
 	if err := json.Unmarshal(ex, &wrap); err == nil {
+		// DEBUG: 输出各数据集长度
+		if os.Getenv("DEBUG") != "" {
+			fmt.Fprintf(os.Stderr, "DEBUG: total_asset=%d, month_profit=%d, year_profit=%d, month_init_zczs=%.2f, year_init_zczs=%.2f\n",
+				len(wrap.TotalAsset), len(wrap.MonthProfit), len(wrap.YearProfit), wrap.MonthInitZczs.F(), wrap.YearInitZczs.F())
+		}
+
 		// 根据 days 参数决定用哪个数据集和对应的基准
 		var data []map[string]any
 		var initZczs float64
@@ -1021,8 +1027,12 @@ func (c *Client) GetAssetTrend(acc Account, days int) ([]AssetTrendPoint, error)
 			// 近一个月用 month_profit
 			data = wrap.MonthProfit
 			initZczs = wrap.MonthInitZczs.F()
+		} else if days > 60 && len(wrap.YearProfit) > 0 {
+			// 长期查询（>60 天）用 year_profit（年度完整数据）
+			data = wrap.YearProfit
+			initZczs = wrap.YearInitZczs.F()
 		} else if len(wrap.TotalAsset) > 0 {
-			// 默认用 total_asset（最近 30 天完整数据）
+			// 中期（32-60 天）用 total_asset（最近 30 天完整数据）
 			data = wrap.TotalAsset
 			// total_asset 跨月，用 month_init_zczs
 			initZczs = wrap.MonthInitZczs.F()

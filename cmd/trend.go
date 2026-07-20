@@ -16,6 +16,7 @@ var (
 	trendAccount string
 	trendDays    int
 	trendPeriod  string // month 或 year
+	trendLimit   int    // 显示最近 N 条，0 表示全部
 )
 
 var trendCmd = &cobra.Command{
@@ -71,14 +72,14 @@ func mustMatchTrendAccounts() []api.Account {
 
 func renderTrendTable(points []api.AssetTrendPoint) {
 	table := tablewriter.NewWriter(os.Stdout)
-	table.SetHeader([]string{"日期", "总资产", "资产变化", "月内盈亏", "月内收益率", "现金", "市值", "仓位"})
+	table.SetHeader([]string{"日期", "总资产", "资产变化", "当日盈亏", "持仓盈亏率", "现金", "市值", "仓位"})
 	table.SetBorder(true)
 	table.SetAutoWrapText(false)
 
-	// 只显示最近 10 个点，避免表格过长
+	// 根据 --limit 参数决定显示范围
 	start := 0
-	if len(points) > 10 {
-		start = len(points) - 10
+	if trendLimit > 0 && len(points) > trendLimit {
+		start = len(points) - trendLimit
 	}
 
 	for i := start; i < len(points); i++ {
@@ -86,19 +87,35 @@ func renderTrendTable(points []api.AssetTrendPoint) {
 
 		// 计算资产变化（相对前一天）
 		var assetChange string
+		var dayProfit string
+		var holdingProfitRate string
+
 		if i > 0 {
 			change := p.TotalAsset - points[i-1].TotalAsset
 			assetChange = colorNum(change)
+			dayProfit = colorNum(change)
+
+			// 持仓盈亏率 = (当日市值 - 前日市值) / 前日市值
+			// 剔除资金流入流出的影响，只看持仓本身的涨跌
+			if points[i-1].MarketValue > 0 {
+				marketValueChange := p.MarketValue - points[i-1].MarketValue
+				rate := marketValueChange / points[i-1].MarketValue
+				holdingProfitRate = colorPct(rate)
+			} else {
+				holdingProfitRate = "-"
+			}
 		} else {
 			assetChange = "-"
+			dayProfit = "-"
+			holdingProfitRate = "-"
 		}
 
 		table.Append([]string{
 			p.Date,
 			fmt.Sprintf("%.2f", p.TotalAsset),
 			assetChange,
-			colorNum(p.Profit),       // 相对月初的盈亏增量
-			colorPct(p.ProfitRate),   // 相对月初的收益率
+			dayProfit,
+			holdingProfitRate,
 			fmt.Sprintf("%.2f", p.Cash),
 			fmt.Sprintf("%.2f", p.MarketValue),
 			fmt.Sprintf("%.1f%%", p.PositionRate*100),
@@ -107,7 +124,7 @@ func renderTrendTable(points []api.AssetTrendPoint) {
 	table.Render()
 
 	if start > 0 {
-		fmt.Printf("（已省略前 %d 个数据点，仅显示最近 10 天）\n", start)
+		fmt.Printf("（已省略前 %d 个数据点，仅显示最近 %d 天）\n", start, len(points)-start)
 	}
 }
 
@@ -152,4 +169,5 @@ func init() {
 	trendCmd.AddCommand(trendShowCmd)
 	trendShowCmd.Flags().StringVarP(&trendAccount, "account", "a", "", "按账户名过滤（模糊匹配），默认全部")
 	trendShowCmd.Flags().IntVarP(&trendDays, "days", "d", 30, "查询天数（默认 30 天）")
+	trendShowCmd.Flags().IntVarP(&trendLimit, "limit", "l", 10, "显示最近 N 条记录，0 表示全部（默认 10）")
 }

@@ -377,22 +377,11 @@ func printFlat(rows []posRow, ctx *liveContext) {
 	}
 }
 
-// totalRowView 汇总表一行（含排序用的派生字段，已按插件口径重算）。
-type totalRowView struct {
-	m       mergedPos
-	lv      api.LiveView
-	price   float64
-	day     float64
-	dayOK   bool
-	dayRate float64
-	rateOK  bool
-	rate    float64
-	value   float64
-	hold    float64
-}
+// totalRowView 已废弃：使用 service.TotalRowView 替代
+type totalRowView = service.TotalRowView
 
 func printTotal(merged []mergedPos, ctx *liveContext) {
-	views := make([]totalRowView, 0, len(merged))
+	views := make([]service.TotalRowView, 0, len(merged))
 	var totalValue, totalProfit, totalDay, totalCount, totalCostBasis, totalSell float64
 	var hasDay bool
 	for _, m := range merged {
@@ -406,20 +395,23 @@ func printTotal(merged []mergedPos, ctx *liveContext) {
 			totalDay += lv.DayProfit
 			hasDay = true
 		}
-		// 行内「今日涨幅」= 价格涨跌幅；有昨收即可显示（含 0.00%）
-		rateOK := false
-		if q := quoteOf(ctx, m.Code); q != nil && q.PrevClose > 0 && lv.Price > 0 {
-			rateOK = true
-		}
-		views = append(views, totalRowView{
-			m: m, lv: lv,
-			price: lv.Price, day: lv.DayProfit, dayOK: lv.DayOK,
-			dayRate: lv.DayRate, rateOK: rateOK,
-			rate: lv.HoldRate, value: lv.Value, hold: lv.HoldProfit,
+		views = append(views, service.TotalRowView{
+			Code:       m.Code,
+			Name:       m.Name,
+			Count:      m.Count,
+			Cost:       m.Cost,
+			Price:      lv.Price,
+			Value:      lv.Value,
+			HoldProfit: lv.HoldProfit,
+			HoldRate:   lv.HoldRate,
+			DayProfit:  lv.DayProfit,
+			DayRate:    lv.DayRate,
+			Accounts:   m.Accounts,
 		})
 	}
 
-	sortTotalViews(views)
+	svc := getPositionService()
+	svc.SortTotalViews(views, sortBy, sortAsc)
 
 	// 合计「收益率」= 总持仓盈亏 / 总成本
 	totalRate := 0.0
@@ -450,35 +442,39 @@ func printTotal(merged []mergedPos, ctx *liveContext) {
 	table.SetRowLine(false)
 
 	for _, v := range views {
-		m := v.m
-		weight := formatter.WeightStr(v.value, totalValue)
+		weight := formatter.WeightStr(v.Value, totalValue)
+		dayOK := v.DayProfit != 0 || hasDay
+		rateOK := false
+		if q := quoteOf(ctx, v.Code); q != nil && q.PrevClose > 0 && v.Price > 0 {
+			rateOK = true
+		}
 		if showDay {
 			table.Append([]string{
-				m.Code,
-				m.Name,
-				fmt.Sprintf("%.0f", m.Count),
-				formatter.PriceStr(m.Cost),
-				formatter.PriceStr(v.price),
-				fmt.Sprintf("%.2f", v.value),
+				v.Code,
+				v.Name,
+				fmt.Sprintf("%.0f", v.Count),
+				formatter.PriceStr(v.Cost),
+				formatter.PriceStr(v.Price),
+				fmt.Sprintf("%.2f", v.Value),
 				weight,
-				formatter.ColorNum(v.hold),
-				formatter.DayStr(v.day, v.dayOK),
-				formatter.RateStr(v.dayRate, v.rateOK),
-				formatter.ColorPct(v.rate),
-				strings.Join(m.Accounts, ","),
+				formatter.ColorNum(v.HoldProfit),
+				formatter.DayStr(v.DayProfit, dayOK),
+				formatter.RateStr(v.DayRate, rateOK),
+				formatter.ColorPct(v.HoldRate),
+				strings.Join(v.Accounts, ","),
 			})
 		} else {
 			table.Append([]string{
-				m.Code,
-				m.Name,
-				fmt.Sprintf("%.0f", m.Count),
-				formatter.PriceStr(m.Cost),
-				formatter.PriceStr(v.price),
-				fmt.Sprintf("%.2f", v.value),
+				v.Code,
+				v.Name,
+				fmt.Sprintf("%.0f", v.Count),
+				formatter.PriceStr(v.Cost),
+				formatter.PriceStr(v.Price),
+				fmt.Sprintf("%.2f", v.Value),
 				weight,
-				formatter.ColorNum(v.hold),
-				formatter.ColorPct(v.rate),
-				strings.Join(m.Accounts, ","),
+				formatter.ColorNum(v.HoldProfit),
+				formatter.ColorPct(v.HoldRate),
+				strings.Join(v.Accounts, ","),
 			})
 		}
 	}
@@ -513,95 +509,6 @@ func printTotal(merged []mergedPos, ctx *liveContext) {
 		})
 	}
 	table.Render()
-}
-
-// sortTotalViews 按 -s/--sort 与 --asc 排序。
-// 数值字段默认降序；code/name 默认升序。--asc 强制升序。
-func sortTotalViews(views []totalRowView) {
-	key := normalizeSortKey(sortBy)
-	desc := !sortAsc
-	if !sortAsc && (key == "code" || key == "name") {
-		desc = false // 代码/名称默认升序
-	}
-
-	sort.SliceStable(views, func(i, j int) bool {
-		a, b := views[i], views[j]
-		// 无行情的 day/dayrate 始终沉底
-		if key == "day" && a.dayOK != b.dayOK {
-			return a.dayOK
-		}
-		if key == "dayrate" && a.rateOK != b.rateOK {
-			return a.rateOK
-		}
-		cmp := cmpTotalView(a, b, key)
-		if desc {
-			return cmp > 0
-		}
-		return cmp < 0
-	})
-}
-
-func normalizeSortKey(raw string) string {
-	key := strings.ToLower(strings.TrimSpace(raw))
-	if key == "" {
-		return "value"
-	}
-	switch key {
-	case "market", "sz", "市值", "总市值":
-		return "value"
-	case "today", "dayprofit", "今日", "今日盈亏", "dryk":
-		return "day"
-	case "profit", "holdprofit", "持仓", "持仓盈亏", "ccyk":
-		return "hold"
-	case "return", "holdrate", "收益率":
-		return "rate"
-	case "zdf", "pct", "今日涨幅", "涨幅":
-		return "dayrate"
-	case "qty", "数量", "总数量":
-		return "count"
-	case "代码":
-		return "code"
-	case "名称":
-		return "name"
-	case "value", "day", "hold", "rate", "dayrate", "code", "name", "count":
-		return key
-	default:
-		fmt.Fprintf(os.Stderr, "未知排序字段 %q，支持: value day hold rate dayrate code name count\n", raw)
-		os.Exit(1)
-		return "value"
-	}
-}
-
-// cmpTotalView: -1 if a<b, 1 if a>b, 0 if equal (on the sort key).
-// 市值/持仓盈亏用实时重算后的 value/hold，与展示一致。
-func cmpTotalView(a, b totalRowView, key string) int {
-	var av, bv float64
-	switch key {
-	case "value":
-		av, bv = a.value, b.value
-	case "day":
-		av, bv = a.day, b.day
-	case "hold":
-		av, bv = a.hold, b.hold
-	case "rate":
-		av, bv = a.rate, b.rate
-	case "dayrate":
-		av, bv = a.dayRate, b.dayRate
-	case "count":
-		av, bv = a.m.Count, b.m.Count
-	case "code":
-		return strings.Compare(a.m.Code, b.m.Code)
-	case "name":
-		return strings.Compare(a.m.Name, b.m.Name)
-	}
-	switch {
-	case av < bv:
-		return -1
-	case av > bv:
-		return 1
-	default:
-		return 0
-	}
 }
 
 
@@ -868,48 +775,50 @@ func printTotalJSON(merged []mergedPos, ctx *liveContext) {
 	var totalValue, totalProfit, totalDay float64
 	var hasDay bool
 
-	// 转换为 totalRowView 并排序
-	views := make([]totalRowView, 0, len(merged))
+	// 转换为 service.TotalRowView 并排序
+	views := make([]service.TotalRowView, 0, len(merged))
 	for _, m := range merged {
 		lv := recomputeMerged(m, ctx)
-		views = append(views, totalRowView{
-			m:       m,
-			price:   lv.Price,
-			value:   lv.Value,
-			hold:    lv.HoldProfit,
-			rate:    lv.HoldRate,
-			day:     lv.DayProfit,
-			dayOK:   lv.DayOK,
-			dayRate: lv.DayRate,
-			rateOK:  lv.DayOK,
-		})
-	}
-	sortTotalViews(views)
-
-	for _, v := range views {
-		m := v.m
-		pos := TotalPositionJSON{
+		views = append(views, service.TotalRowView{
 			Code:       m.Code,
 			Name:       m.Name,
 			Count:      m.Count,
 			Cost:       m.Cost,
-			Price:      v.price,
-			Value:      v.value,
-			HoldProfit: v.hold,
-			HoldRate:   v.rate,
+			Price:      lv.Price,
+			Value:      lv.Value,
+			HoldProfit: lv.HoldProfit,
+			HoldRate:   lv.HoldRate,
+			DayProfit:  lv.DayProfit,
+			DayRate:    lv.DayRate,
 			Accounts:   m.Accounts,
+		})
+	}
+	svc := getPositionService()
+	svc.SortTotalViews(views, sortBy, sortAsc)
+
+	for _, v := range views {
+		pos := TotalPositionJSON{
+			Code:       v.Code,
+			Name:       v.Name,
+			Count:      v.Count,
+			Cost:       v.Cost,
+			Price:      v.Price,
+			Value:      v.Value,
+			HoldProfit: v.HoldProfit,
+			HoldRate:   v.HoldRate,
+			Accounts:   v.Accounts,
 		}
 
-		if showDay && v.dayOK {
-			pos.DayProfit = &v.day
-			pos.DayRate = &v.dayRate
-			totalDay += v.day
+		if showDay && v.DayProfit != 0 {
+			pos.DayProfit = &v.DayProfit
+			pos.DayRate = &v.DayRate
+			totalDay += v.DayProfit
 			hasDay = true
 		}
 
 		result = append(result, pos)
-		totalValue += v.value
-		totalProfit += v.hold
+		totalValue += v.Value
+		totalProfit += v.HoldProfit
 	}
 
 	summary := map[string]any{

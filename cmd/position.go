@@ -6,8 +6,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/fatih/color"
-	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 
 	"github.com/liyanran/tzzb-cli/internal/formatter"
@@ -27,6 +25,10 @@ var (
 
 func getPositionService() *service.PositionService {
 	return service.NewPositionService(apiClient, calculator)
+}
+
+func getRenderService() *service.RenderService {
+	return service.NewRenderService(getPositionService())
 }
 
 var positionCmd = &cobra.Command{
@@ -66,11 +68,12 @@ var positionListCmd = &cobra.Command{
 			printPositionListJSON(rows, ctx, flatList)
 			return
 		}
+		renderSvc := getRenderService()
 		if flatList {
-			printFlat(rows, ctx)
+			renderSvc.RenderFlat(rows, ctx)
 			return
 		}
-		printByAccount(rows, ctx)
+		renderSvc.RenderByAccount(rows, ctx)
 	},
 }
 
@@ -103,7 +106,8 @@ var positionTotalCmd = &cobra.Command{
 			printPositionTotalJSON(merged, ctx)
 			return
 		}
-		printTotal(merged, ctx)
+		renderSvc := getRenderService()
+		renderSvc.RenderTotal(merged, ctx, sortBy, sortAsc)
 	},
 }
 
@@ -142,7 +146,8 @@ var positionStockCmd = &cobra.Command{
 			printPositionTotalJSON(merged, ctx)
 			return
 		}
-		printTotal(merged, ctx)
+		renderSvc := getRenderService()
+		renderSvc.RenderTotal(merged, ctx, sortBy, sortAsc)
 	},
 }
 
@@ -174,7 +179,8 @@ var positionFundCmd = &cobra.Command{
 			printPositionTotalJSON(merged, nil)
 			return
 		}
-		printTotal(merged, nil)
+		renderSvc := getRenderService()
+		renderSvc.RenderTotal(merged, nil, sortBy, sortAsc)
 	},
 }
 
@@ -218,6 +224,24 @@ func quoteOf(ctx *liveContext, code string) *api.Quote {
 	return svc.QuoteOf(ctx, code)
 }
 
+// 已废弃：使用 renderSvc.RenderByAccount() 替代
+func printByAccount(rows []posRow, ctx *liveContext) {
+	renderSvc := getRenderService()
+	renderSvc.RenderByAccount(rows, ctx)
+}
+
+// 已废弃：使用 renderSvc.RenderFlat() 替代
+func printFlat(rows []posRow, ctx *liveContext) {
+	renderSvc := getRenderService()
+	renderSvc.RenderFlat(rows, ctx)
+}
+
+// 已废弃：使用 renderSvc.RenderTotal() 替代
+func printTotal(merged []mergedPos, ctx *liveContext) {
+	renderSvc := getRenderService()
+	renderSvc.RenderTotal(merged, ctx, sortBy, sortAsc)
+}
+
 func recomputePos(r posRow, ctx *liveContext) api.LiveView {
 	svc := getPositionService()
 	return svc.RecomputePosition(r, ctx)
@@ -228,288 +252,8 @@ func recomputeMerged(m mergedPos, ctx *liveContext) api.LiveView {
 	return svc.RecomputeMerged(m, ctx)
 }
 
-func printByAccount(rows []posRow, ctx *liveContext) {
-	var order []string
-	groups := map[string][]posRow{}
-	catOf := map[string]string{}
-	for _, r := range rows {
-		if _, ok := groups[r.Account]; !ok {
-			order = append(order, r.Account)
-			catOf[r.Account] = r.Category
-		}
-		groups[r.Account] = append(groups[r.Account], r)
-	}
-
-	showDay := ctx != nil && len(ctx.Quotes) > 0
-	var grandValue, grandProfit, grandDay float64
-	var hasDay bool
-	for _, name := range order {
-		list := groups[name]
-		fmt.Printf("\n【%s · %s】\n", name, api.CategoryLabel(catOf[name]))
-		table := tablewriter.NewWriter(os.Stdout)
-		useLive := showDay && catOf[name] != "fund"
-		if useLive {
-			table.SetHeader([]string{"代码", "名称", "持仓量", "成本价", "现价", "市值", "持仓盈亏", "今日盈亏", "今日涨幅", "收益率"})
-		} else {
-			table.SetHeader([]string{"代码", "名称", "持仓量", "成本价", "现价", "市值", "持仓盈亏", "本周盈亏", "收益率"})
-		}
-		table.SetBorder(true)
-
-		var subValue, subProfit, subDay float64
-		var subHasDay bool
-		for _, r := range list {
-			if useLive {
-				lv := recomputePos(r, ctx)
-				subValue += lv.Value
-				subProfit += lv.HoldProfit
-				if lv.DayOK {
-					subDay += lv.DayProfit
-					subHasDay = true
-				}
-				table.Append([]string{
-					r.Position.Code, r.Position.Name,
-					fmt.Sprintf("%.0f", r.Position.Count.F()),
-					formatter.PriceStr(r.Position.Cost.F()),
-					formatter.PriceStr(lv.Price),
-					fmt.Sprintf("%.2f", lv.Value),
-					formatter.ColorNum(lv.HoldProfit),
-					formatter.DayStr(lv.DayProfit, lv.DayOK),
-					formatter.RateStr(lv.DayRate, lv.DayOK),
-					formatter.ColorPct(lv.HoldRate),
-				})
-			} else {
-				lv := recomputePos(r, nil)
-				subValue += lv.Value
-				subProfit += lv.HoldProfit
-				table.Append(posCells(r, nil))
-			}
-		}
-		table.Render()
-		grandValue += subValue
-		grandProfit += subProfit
-		if subHasDay {
-			grandDay += subDay
-			hasDay = true
-		}
-		if subHasDay {
-			fmt.Printf("小计  市值: %.2f | 持仓盈亏: %s | 今日盈亏: %s | 标的: %d\n",
-				subValue, formatter.ColorNum(subProfit), formatter.ColorNum(subDay), len(list))
-		} else {
-			fmt.Printf("小计  市值: %.2f | 持仓盈亏: %s | 标的: %d\n",
-				subValue, formatter.ColorNum(subProfit), len(list))
-		}
-	}
-
-	fmt.Println()
-	if hasDay {
-		color.New(color.Bold).Printf("合计  市值: %.2f | 持仓盈亏: %s | 今日盈亏: %s | 行数: %d | 账户: %d\n",
-			grandValue, formatter.ColorNum(grandProfit), formatter.ColorNum(grandDay), len(rows), len(order))
-	} else {
-		color.New(color.Bold).Printf("合计  市值: %.2f | 持仓盈亏: %s | 行数: %d | 账户: %d\n",
-			grandValue, formatter.ColorNum(grandProfit), len(rows), len(order))
-	}
-}
-
-func printFlat(rows []posRow, ctx *liveContext) {
-	type flatView struct {
-		r  posRow
-		lv api.LiveView
-	}
-	views := make([]flatView, 0, len(rows))
-	for _, r := range rows {
-		c := ctx
-		if r.Category == "fund" {
-			c = nil
-		}
-		views = append(views, flatView{r: r, lv: recomputePos(r, c)})
-	}
-	sort.Slice(views, func(i, j int) bool {
-		return views[i].lv.Value > views[j].lv.Value
-	})
-
-	showDay := ctx != nil && len(ctx.Quotes) > 0
-	table := tablewriter.NewWriter(os.Stdout)
-	if showDay {
-		table.SetHeader([]string{"账户", "类型", "代码", "名称", "持仓量", "成本价", "现价", "市值", "持仓盈亏", "今日盈亏", "今日涨幅", "收益率"})
-	} else {
-		table.SetHeader([]string{"账户", "类型", "代码", "名称", "持仓量", "成本价", "现价", "市值", "持仓盈亏", "本周盈亏", "收益率"})
-	}
-	table.SetBorder(true)
-
-	var totalValue, totalProfit, totalDay float64
-	var hasDay bool
-	for _, v := range views {
-		r, lv := v.r, v.lv
-		totalValue += lv.Value
-		totalProfit += lv.HoldProfit
-		if showDay && r.Category != "fund" {
-			if lv.DayOK {
-				totalDay += lv.DayProfit
-				hasDay = true
-			}
-			table.Append([]string{
-				r.Account, api.CategoryLabel(r.Category),
-				r.Position.Code, r.Position.Name,
-				fmt.Sprintf("%.0f", r.Position.Count.F()),
-				formatter.PriceStr(r.Position.Cost.F()),
-				formatter.PriceStr(lv.Price),
-				fmt.Sprintf("%.2f", lv.Value),
-				formatter.ColorNum(lv.HoldProfit),
-				formatter.DayStr(lv.DayProfit, lv.DayOK),
-				formatter.RateStr(lv.DayRate, lv.DayOK),
-				formatter.ColorPct(lv.HoldRate),
-			})
-		} else {
-			cells := []string{r.Account, api.CategoryLabel(r.Category)}
-			cells = append(cells, posCells(r, nil)...)
-			table.Append(cells)
-		}
-	}
-	table.Render()
-
-	fmt.Println()
-	if hasDay {
-		color.New(color.Bold).Printf("合计  市值: %.2f | 持仓盈亏: %s | 今日盈亏: %s | 行数: %d\n",
-			totalValue, formatter.ColorNum(totalProfit), formatter.ColorNum(totalDay), len(rows))
-	} else {
-		color.New(color.Bold).Printf("合计  市值: %.2f | 持仓盈亏: %s | 行数: %d\n",
-			totalValue, formatter.ColorNum(totalProfit), len(rows))
-	}
-}
-
 // totalRowView 已废弃：使用 service.TotalRowView 替代
 type totalRowView = service.TotalRowView
-
-func printTotal(merged []mergedPos, ctx *liveContext) {
-	views := make([]service.TotalRowView, 0, len(merged))
-	var totalValue, totalProfit, totalDay, totalCount, totalCostBasis, totalSell float64
-	var hasDay bool
-	for _, m := range merged {
-		lv := recomputeMerged(m, ctx)
-		totalValue += lv.Value
-		totalProfit += lv.HoldProfit
-		totalCount += m.Count
-		totalCostBasis += m.Cost * m.Count
-		totalSell += lv.SellAmount
-		if lv.DayOK {
-			totalDay += lv.DayProfit
-			hasDay = true
-		}
-		views = append(views, service.TotalRowView{
-			Code:       m.Code,
-			Name:       m.Name,
-			Count:      m.Count,
-			Cost:       m.Cost,
-			Price:      lv.Price,
-			Value:      lv.Value,
-			HoldProfit: lv.HoldProfit,
-			HoldRate:   lv.HoldRate,
-			DayProfit:  lv.DayProfit,
-			DayRate:    lv.DayRate,
-			Accounts:   m.Accounts,
-		})
-	}
-
-	svc := getPositionService()
-	svc.SortTotalViews(views, sortBy, sortAsc)
-
-	// 合计「收益率」= 总持仓盈亏 / 总成本
-	totalRate := 0.0
-	if totalCostBasis != 0 {
-		totalRate = totalProfit / totalCostBasis * 100
-	}
-	// 合计行「今日涨幅」= 组合持仓当日盈亏比（相对总市值，非账户总资产）：
-	//   总今日盈亏 / (总市值 − 总今日盈亏 + 总卖出额)
-	// 与单票 drykb 同一套分母；现金不摊薄。账本 now_rate 用总资产，口径不同。
-	totalDayRate := 0.0
-	totalDayRateOK := false
-	if hasDay {
-		den := totalValue - totalDay + totalSell
-		if den != 0 {
-			totalDayRate = totalDay / den * 100
-			totalDayRateOK = true
-		}
-	}
-
-	showDay := ctx != nil && len(ctx.Quotes) > 0
-	table := tablewriter.NewWriter(os.Stdout)
-	if showDay {
-		table.SetHeader([]string{"代码", "名称", "总数量", "均成本", "现价", "总市值", "占比", "持仓盈亏", "今日盈亏", "今日涨幅", "收益率", "账户"})
-	} else {
-		table.SetHeader([]string{"代码", "名称", "总数量", "均成本", "现价", "总市值", "占比", "持仓盈亏", "收益率", "账户"})
-	}
-	table.SetBorder(true)
-	table.SetRowLine(false)
-
-	for _, v := range views {
-		weight := formatter.WeightStr(v.Value, totalValue)
-		dayOK := v.DayProfit != 0 || hasDay
-		rateOK := false
-		if q := quoteOf(ctx, v.Code); q != nil && q.PrevClose > 0 && v.Price > 0 {
-			rateOK = true
-		}
-		if showDay {
-			table.Append([]string{
-				v.Code,
-				v.Name,
-				fmt.Sprintf("%.0f", v.Count),
-				formatter.PriceStr(v.Cost),
-				formatter.PriceStr(v.Price),
-				fmt.Sprintf("%.2f", v.Value),
-				weight,
-				formatter.ColorNum(v.HoldProfit),
-				formatter.DayStr(v.DayProfit, dayOK),
-				formatter.RateStr(v.DayRate, rateOK),
-				formatter.ColorPct(v.HoldRate),
-				strings.Join(v.Accounts, ","),
-			})
-		} else {
-			table.Append([]string{
-				v.Code,
-				v.Name,
-				fmt.Sprintf("%.0f", v.Count),
-				formatter.PriceStr(v.Cost),
-				formatter.PriceStr(v.Price),
-				fmt.Sprintf("%.2f", v.Value),
-				weight,
-				formatter.ColorNum(v.HoldProfit),
-				formatter.ColorPct(v.HoldRate),
-				strings.Join(v.Accounts, ","),
-			})
-		}
-	}
-
-	if showDay {
-		table.Append([]string{
-			"合计",
-			fmt.Sprintf("%d只", len(merged)),
-			fmt.Sprintf("%.0f", totalCount),
-			"-",
-			"-",
-			fmt.Sprintf("%.2f", totalValue),
-			formatter.WeightStr(totalValue, totalValue),
-			formatter.ColorNum(totalProfit),
-			formatter.DayStr(totalDay, hasDay),
-			formatter.RateStr(totalDayRate, totalDayRateOK),
-			formatter.ColorPct(totalRate),
-			"",
-		})
-	} else {
-		table.Append([]string{
-			"合计",
-			fmt.Sprintf("%d只", len(merged)),
-			fmt.Sprintf("%.0f", totalCount),
-			"-",
-			"-",
-			fmt.Sprintf("%.2f", totalValue),
-			formatter.WeightStr(totalValue, totalValue),
-			formatter.ColorNum(totalProfit),
-			formatter.ColorPct(totalRate),
-			"",
-		})
-	}
-	table.Render()
-}
 
 
 // normalizeCode 已废弃：使用 service.normalizeCode 替代

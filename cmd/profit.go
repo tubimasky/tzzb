@@ -8,6 +8,7 @@ import (
 
 	"github.com/liyanran/tzzb-cli/internal/cli"
 	"github.com/liyanran/tzzb-cli/internal/formatter"
+	"github.com/liyanran/tzzb-cli/internal/service"
 	"github.com/liyanran/tzzb-cli/pkg/api"
 )
 
@@ -112,6 +113,133 @@ var profitSummaryCmd = &cobra.Command{
 	},
 }
 
+var (
+	profitAccount string
+	profitYear    string
+	profitStart   string
+	profitEnd     string
+	profitTop     int
+)
+
+func getStockProfitService() *service.StockProfitService {
+	return service.NewStockProfitService(apiClient)
+}
+
+var profitMonthCmd = &cobra.Command{
+	Use:   "month",
+	Short: "月度盈亏（某年各月股票盈亏，含大盘对比）",
+	Long:  `按月展示某年股票盈亏，附账户收益率与同期大盘涨跌。可用 -a 过滤账户。`,
+	Run: func(cmd *cobra.Command, args []string) {
+		svc := getStockProfitService()
+		res, year, err := svc.LoadMonthly(profitAccount, profitYear)
+		if err != nil {
+			cli.HandleError(err, "获取月度盈亏失败")
+		}
+
+		if outputJSON {
+			printStockPLJSON(res)
+			return
+		}
+
+		fmt.Printf("%s 年 月度盈亏\n\n", year)
+		headers := []string{"月份", "盈亏", "收益率", "同期大盘"}
+		var rows [][]string
+		for _, p := range res.Points {
+			rows = append(rows, []string{
+				service.FormatMonth(p.Date),
+				formatter.ColorNum(p.ProfitLoss),
+				formatter.ColorPctRaw(p.Rate),
+				formatter.ColorPctRaw(p.SZRate),
+			})
+		}
+		formatter.RenderTable(headers, rows, formatter.WithBorder(true))
+		printStockPLSummary(res)
+		if profitTop != 0 {
+			renderStockTopCodes(svc, res)
+		}
+	},
+}
+
+var profitRangeCmd = &cobra.Command{
+	Use:   "range",
+	Short: "区间盈亏（某段时间每日股票盈亏 + 个股盈亏）",
+	Long:  `按日展示某区间股票盈亏，并汇总区间内各标的盈亏。日期格式 YYYYMMDD，默认本月初到今天。`,
+	Run: func(cmd *cobra.Command, args []string) {
+		svc := getStockProfitService()
+		res, start, end, err := svc.LoadRange(profitAccount, profitStart, profitEnd)
+		if err != nil {
+			cli.HandleError(err, "获取区间盈亏失败")
+		}
+
+		if outputJSON {
+			printStockPLJSON(res)
+			return
+		}
+
+		fmt.Printf("%s ~ %s 每日盈亏\n\n", service.FormatDay(start), service.FormatDay(end))
+		headers := []string{"日期", "盈亏", "收益率", "同期大盘"}
+		var rows [][]string
+		for _, p := range res.Points {
+			rows = append(rows, []string{
+				service.FormatDay(p.Date),
+				formatter.ColorNum(p.ProfitLoss),
+				formatter.ColorPctRaw(p.Rate),
+				formatter.ColorPctRaw(p.SZRate),
+			})
+		}
+		formatter.RenderTable(headers, rows, formatter.WithBorder(true))
+		printStockPLSummary(res)
+		if profitTop != 0 {
+			renderStockTopCodes(svc, res)
+		}
+	},
+}
+
+func printStockPLSummary(res *api.StockPLResult) {
+	fmt.Println()
+	color.New(color.Bold).Printf(
+		"区间合计  盈亏: %s | 收益率: %s | 同期大盘: %s\n",
+		formatter.ColorNum(res.TotalPL),
+		formatter.ColorPctRaw(res.TotalRate),
+		formatter.ColorPctRaw(res.TotalSZ),
+	)
+}
+
+func renderStockTopCodes(svc *service.StockProfitService, res *api.StockPLResult) {
+	codes := svc.TopCodes(res, profitTop)
+	var rows []formatter.CodePLRow
+	for _, c := range codes {
+		rows = append(rows, formatter.CodePLRow{
+			Code:       c.Code,
+			Name:       c.Name,
+			ProfitLoss: c.ProfitLoss,
+			Type:       c.Type,
+		})
+	}
+	formatter.RenderCodePL(fmt.Sprintf("区间个股盈亏 Top %d", profitTop), rows)
+}
+
+func printStockPLJSON(res *api.StockPLResult) {
+	formatter.PrintJSON(map[string]any{
+		"total_pl":   res.TotalPL,
+		"total_rate": res.TotalRate,
+		"total_sz":   res.TotalSZ,
+		"points":     res.Points,
+		"codes":      res.Codes,
+	})
+}
+
 func init() {
 	profitCmd.AddCommand(profitSummaryCmd)
+	profitCmd.AddCommand(profitMonthCmd)
+	profitCmd.AddCommand(profitRangeCmd)
+
+	profitMonthCmd.Flags().StringVarP(&profitAccount, "account", "a", "", "按账户名过滤（模糊匹配），默认全部账户汇总")
+	profitMonthCmd.Flags().StringVarP(&profitYear, "year", "y", "", "年份 YYYY，默认当前年")
+	profitMonthCmd.Flags().IntVarP(&profitTop, "top", "t", 10, "显示区间个股盈亏 Top N，0 表示不显示")
+
+	profitRangeCmd.Flags().StringVarP(&profitAccount, "account", "a", "", "按账户名过滤（模糊匹配），默认全部账户汇总")
+	profitRangeCmd.Flags().StringVarP(&profitStart, "start", "s", "", "起始日期 YYYYMMDD，默认本月初")
+	profitRangeCmd.Flags().StringVarP(&profitEnd, "end", "e", "", "结束日期 YYYYMMDD，默认今天")
+	profitRangeCmd.Flags().IntVarP(&profitTop, "top", "t", 10, "显示区间个股盈亏 Top N，0 表示不显示")
 }

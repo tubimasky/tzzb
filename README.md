@@ -97,7 +97,16 @@ tzzb export position -f json
 | `position stock` | 股票/ETF 汇总 | `-a` |
 | `position fund` | 场外基金汇总 | `-a` |
 | `trade list` | 交易流水 | `-a/--account` 账户名过滤 |
-| `profit summary` | 收益汇总 | 无 |
+| `profit summary` | 收益汇总（账户维度快照） | 无 |
+| `profit month` | 月度盈亏（某年各月，含收益率/大盘对比） | `-a` / `-y` 年份 / `-t` Top N |
+| `profit range` | 区间盈亏（每日 + 区间个股盈亏） | `-a` / `-s` 起始 / `-e` 结束（YYYYMMDD）/ `-t` Top N |
+| `analysis dist` | 持仓分布（按市值占比） | `-a` / `-t` Top N |
+| `analysis rate` | 账户仓位率 | `-a` |
+| `trend show` | 单账户资产趋势 | `-a` / `-d` 天数 / `-b` 大盘对比 |
+| `trend summary` | 聚合资产趋势 | `-t all\|stock\|fund` / `-d` / `-b` |
+| `bank list` | 银证转账明细 | `-a` / `-d` 天数 |
+| `calendar month` | 盈亏月历（某月每日） | `-a` / `-m` 月份 / `-t` Top N |
+| `calendar year` | 盈亏年视图（某年每月） | `-a` / `-y` 年份 / `-t` Top N |
 | `export account` | 导出账户 | `-f/--format` csv/json、`-o/--output` |
 | `export position` | 导出持仓 | `-f/--format` csv/json、`-o/--output` |
 

@@ -63,12 +63,13 @@ func (c *Client) GetStockAccounts() ([]StockAccountRef, error) {
 // CalendarParams 是盈亏日历汇总口径的账户聚合参数。
 // combineCalendar 是「全账户合并」视图：把纳入的账户标识按类型连接成逗号分隔串。
 type CalendarParams struct {
-	Fundid     string // 各基金 fundId 连接
-	FundTypes  string // 各基金 type 连接（manFund 等）
-	Qsid       string // 各股票账户 qsid 连接
-	Zjzh       string // 各股票账户 zjzh 连接
-	StockTypes string // 各股票账户 cus_stockType 连接（common/rzrq）
-	ManualID   string // 手动账户 manual_id 连接
+	Fundid       string // 各基金 fundId 连接
+	FundTypes    string // 各基金 type 连接（manFund 等）
+	Qsid         string // 各股票账户 qsid 连接
+	Zjzh         string // 各股票账户 zjzh 连接
+	StockTypes   string // 各股票账户 cus_stockType 连接（common/rzrq），与 Qsid/Zjzh 同序
+	StockFundKey string // 各股票账户 fund_key 连接（stock 侧盈亏/分析接口的 fundkey，非基金 fundid）
+	ManualID     string // 手动账户 manual_id 连接
 }
 
 // empty 判断是否没有任何账户标识（无法查询）。
@@ -126,7 +127,7 @@ type calendarExData struct {
 // stockRefs 来自 GetStockAccounts（提供 zjzh）；accounts 来自 GetAccountList（提供 fund/manual 信息）。
 // stock 账户靠 fund_key 与 stockRefs 关联：只有 accounts 里出现的 fund_key 才纳入（支持单账户过滤）。
 func BuildCalendarParams(accounts []Account, stockRefs []StockAccountRef) CalendarParams {
-	var fundids, fundTypes, qsids, zjzhs, stockTypes, manualIDs []string
+	var fundids, fundTypes, qsids, zjzhs, stockTypes, stockFundKeys, manualIDs []string
 
 	// 收集本次纳入的 stock 账户 fund_key，用于筛选 stockRefs。
 	stockKeys := map[string]bool{}
@@ -157,15 +158,17 @@ func BuildCalendarParams(accounts []Account, stockRefs []StockAccountRef) Calend
 		qsids = append(qsids, r.Qsid)
 		zjzhs = append(zjzhs, r.Zjzh)
 		stockTypes = append(stockTypes, r.Type)
+		stockFundKeys = append(stockFundKeys, r.FundKey)
 	}
 
 	return CalendarParams{
-		Fundid:     strings.Join(fundids, ","),
-		FundTypes:  strings.Join(fundTypes, ","),
-		Qsid:       strings.Join(qsids, ","),
-		Zjzh:       strings.Join(zjzhs, ","),
-		StockTypes: strings.Join(stockTypes, ","),
-		ManualID:   strings.Join(manualIDs, ","),
+		Fundid:       strings.Join(fundids, ","),
+		FundTypes:    strings.Join(fundTypes, ","),
+		Qsid:         strings.Join(qsids, ","),
+		Zjzh:         strings.Join(zjzhs, ","),
+		StockTypes:   strings.Join(stockTypes, ","),
+		StockFundKey: strings.Join(stockFundKeys, ","),
+		ManualID:     strings.Join(manualIDs, ","),
 	}
 }
 

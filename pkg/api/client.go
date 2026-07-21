@@ -33,6 +33,15 @@ const (
 	epStockGetAccounts = "/caishen_fund/stock/getAccounts"              // 股票账户列表（含 zjzh 资金账号）
 	epCalDaily         = "/caishen_fund/combineCalendar/dailyProfitloss"   // 盈亏日历：某月各日
 	epCalMonthly       = "/caishen_fund/combineCalendar/monthlyProfitloss" // 盈亏日历：某年各月
+
+	// 股票时间维度盈亏（梯队 A，全账户合算走 Merge 变体）。
+	// 关键坑：startdate/enddate 用 YYYYMMDD 无横杠（与 combineCalendar 带横杠不同，带横杠会返回 -2 服务器繁忙）。
+	epStockMonthlyPL = "/caishen_fund/stock/monthlyProfitLossMerge" // 某年各月盈亏
+	epStockCodePL    = "/caishen_fund/stock/profitlossByCodeMerge"  // 某区间每日盈亏 + 区间内个股盈亏
+
+	// 股票仓位分析（梯队 B）。fundkey 用 stock 账户 fund_key（非基金 fundid）。
+	epAnalysisPosDist  = "/caishen_fund/stockAnalysisSummary/position_distribution" // 持仓分布（按市值）
+	epAnalysisPosRate  = "/caishen_fund/stockAnalysisSummary/accountPositionRate"   // 账户仓位率
 )
 
 // 当日成交 czdm（与插件 De 常量一致）

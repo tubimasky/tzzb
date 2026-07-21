@@ -543,7 +543,7 @@ func (c *Client) GetAssetTrend(acc Account, days int) ([]AssetTrendPoint, error)
 
 从 `~/Downloads/tzzb-plugin` 的 JS bundle 里扒到的全部 `/caishen_fund/...` 端点。所有路径需拼公共前缀 `/caishen_httpserver/tzzb`（见 §1.1）。
 
-#### 已接入（10 个）
+#### 已接入（16 个）
 
 | path | 用途 | 对应命令 |
 |---|---|---|
@@ -557,36 +557,43 @@ func (c *Client) GetAssetTrend(acc Account, days int) ([]AssetTrendPoint, error)
 | `pc/asset/v1/fund_position` | 基金持仓 | `position` |
 | `pc/asset/v1/stock_position` | 股票持仓 | `position` |
 | `pc/asset/v1/query_bank_history` | 银证转账 | `bank` |
+| `stock/getAccounts` | 股票账户列表（含 zjzh） | 盈亏/日历集约参数 |
+| `combineCalendar/dailyProfitloss` | 组合每日盈亏 | `calendar month` |
+| `combineCalendar/monthlyProfitloss` | 组合月度盈亏 | `calendar year` |
+| `stock/monthlyProfitLossMerge` | 月度股票盈亏（含收益率/大盘） | `profit month` |
+| `stock/profitlossByCodeMerge` | 区间每日盈亏 + 个股盈亏 | `profit range` |
+| `stockAnalysisSummary/position_distribution` | 持仓分布（按市值） | `analysis dist` |
+| `stockAnalysisSummary/accountPositionRate` | 账户仓位率 | `analysis rate` |
 
 #### 未接入 — 只读查询类（有做成命令的价值）
 
-**股票盈亏分析**（当前 `profit` 覆盖很浅，最值得补）
+**股票盈亏分析**（`profit month`/`range` 已接入 Merge 变体，见 §3.11）
 ```
+stock/monthlyProfitLossMerge         月度盈亏（合并）        ✅ profit month
+stock/profitlossByCodeMerge          按代码盈亏（合并）      ✅ profit range
 stock/accountProfitloss              账户维度盈亏
 stock/accountProfitlossMerge         账户盈亏（合并）
 stock/dailyStockProfitLoss           每日个股盈亏
-stock/monthlyProfitLoss              月度盈亏
-stock/monthlyProfitLossMerge         月度盈亏（合并）
+stock/monthlyProfitLoss              月度盈亏（单账户，非合并）
 stock/monthlyStockProfitLoss         月度个股盈亏
-stock/profitlossByCode               按股票代码查盈亏
-stock/profitlossByCodeMerge          按代码盈亏（合并）
-stock/v1/yearly_profit_loss          年度盈亏
+stock/profitlossByCode               按股票代码查盈亏（单账户）
+stock/v1/yearly_profit_loss          年度盈亏（响应下划线命名，见 §3.11 备注）
 stock/v1/yearly_stock_profit_loss    年度个股盈亏
 stock/v1/distribution_merge          分布（合并）
 stock/bs                             买卖点记录
 stock/asset                          股票资产
 stock/index                          指数
-stock/getAccounts                    账户列表（股票侧）
+stock/getAccounts                    账户列表（股票侧）      ✅ 集约参数用
 ```
 
 **股票分析汇总**（仓位/分布/统计）
 ```
+stockAnalysisSummary/position_distribution   持仓分布        ✅ analysis dist
+stockAnalysisSummary/accountPositionRate     账户仓位率      ✅ analysis rate
 stockAnalysisSummary/analysis                综合分析
-stockAnalysisSummary/summaryInfo             汇总信息
-stockAnalysisSummary/statistics              统计指标
+stockAnalysisSummary/summaryInfo             汇总信息（begin_time 建仓起始日）
+stockAnalysisSummary/statistics              统计指标（需 command 命令码，未展开）
 stockAnalysisSummary/dayAnalysis             当日分析
-stockAnalysisSummary/accountPositionRate     账户仓位率
-stockAnalysisSummary/position_distribution   持仓分布
 stockAnalysisSummary/v1/duration_rate        持有期收益率
 stockAnalysisSummary/v1/select_analysis      选股分析
 ```
@@ -694,6 +701,47 @@ community/personal_homepage/v1/view_homepage 个人主页
 ```
 
 > **推荐优先做：** 股票盈亏分析（`stock/*ProfitLoss` 系列）、仓位分布（`stockAnalysisSummary/*`）、盈亏日历（`combineCalendar/*`）。三块都是纯查询、与现有 account/position/profit 同源，补齐后分析能力会完整很多。接入前需先抓真实请求参数与响应结构。
+
+### 3.11 股票盈亏 / 仓位分析接口（已接入，抓包验证）
+
+第一梯队接入的四个接口，与 combineCalendar 同一套「全账户合算」账户口径（`BuildCalendarParams`），但**参数字段名与日期格式两套 builder 有差异，且踩过两个坑**，此处记全。
+
+对应命令：`profit month`、`profit range`、`analysis dist`、`analysis rate`。
+
+#### 共用集约参数来源
+
+三系接口（combineCalendar / stock*ProfitLoss / stockAnalysisSummary）都靠 `CalendarParams` 提供账户标识。其中 **stock 账户的 `zjzh`（资金账号）不在 account_list**，须另调 `stock/getAccounts` 补齐（见 [[calendar-profit-api]]）。`CalendarParams` 现含 `StockFundKey` 字段：与 `qsid`/`zjzh` 同序的 stock 账户 fund_key 连接串，梯队 A/B 都要用。
+
+#### 梯队 A — `stock/monthlyProfitLossMerge` / `stock/profitlossByCodeMerge`
+
+集约参数（`stockPLParams`）：
+```
+cus_stockType=all, types=<stock_types>, merge_type=<stock_types>,
+zjzh, qsid, fund_key=<stock 账户 fund_key>, rzrq_fund_key=, manual_id,
+from_pc=1, terminal=123, version=11,
+sz_cal=1, jy_cal=1, cw_cal=0        # 插件常量 G：市值/交易计算开，持仓关
+```
+业务参数：monthly 加 `year=YYYY`；range 加 `startdate`/`enddate`。
+
+**坑 1（日期格式）**：`startdate`/`enddate` 用 **`YYYYMMDD` 无横杠**。带横杠（`2026-07-01`）会返回 `error_code=-2 服务器繁忙` —— 与 combineCalendar 用带横杠恰好相反，别混用。
+
+**坑 2（fund_key 口径）**：`fund_key` 是 **stock 账户 fund_key**（与 qsid/zjzh 对齐），不是基金 fundid。实测服务端主要靠 `zjzh+qsid` 匹配，fund_key 填基金 fundid 也能返回相同结果，但按插件口径带 stock fund_key 更稳妥。
+
+响应 `ex_data`：`totalProfit` / `totalProfitRate`（收益率，小数）/ `totalSz`（同期大盘涨跌，小数）+ `profitlossList[{date, profitloss, profitloss_rate, sz}]` + `profitlossCode[{code,name,profitloss,type}]`。
+
+**已验证：`totalProfit`/`totalProfitRate`/`totalSz` 均随 startdate/enddate 收窄而变化**（三个区间实测各不同），且 `totalProfit` 与 profitlossList 逐日累加精确相等。区间合计直接用接口的这三个字段即可，无需手工累加。
+
+#### 梯队 B — `stockAnalysisSummary/{position_distribution,accountPositionRate}`
+
+集约参数（`analysisParams`，字段名与梯队 A 不同）：
+```
+zjzh, qsid, fundkey=<stock 账户 fund_key>, rzrq_fund_key=, manual_id, from_pc=1
+```
+注意是 **`fundkey`（无下划线）**，且值必须是 **stock 账户 fund_key**；填成基金 fundid 会返回**空数组**（这是最初 position_list=[] 的原因）。业务参数加 `start_date`/`end_date`（YYYYMMDD）；accountPositionRate 另加 `type=0`（全部口径，对齐插件 analysis 的 `total` 枚举）。
+
+响应：
+- position_distribution → `total_value` + `position_list[{stock_code, stock_name, stock_value, market}]`。`total_value` 偶为 0，占比分母用明细累加兜底。
+- accountPositionRate → `account_list[{name, qsmc, stock_total, money_remain, zjzh, ...}]`，仓位率 = stock_total / (stock_total + money_remain)。
 
 ### 3.9 全量原始清单（附录，共 227 条，一条不落）
 
@@ -1308,7 +1356,16 @@ tzzb login --cookie "userid=...; ..."# 直接参数传
 tzzb account list                    # 账户列表 + 汇总
 tzzb position list                   # 全部持仓
 tzzb position list -a 华宝           # 按账户名模糊过滤
-tzzb profit summary                  # 收益汇总
+tzzb profit summary                  # 收益汇总（账户级快照）
+tzzb profit month                    # 月度盈亏（某年各月，含账户收益率/同期大盘）
+tzzb profit month -y 2026 -a 国      # 指定年份 + 账户过滤
+tzzb profit range                    # 区间每日盈亏 + 区间个股盈亏（默认本月初到今天）
+tzzb profit range -s 20260701 -e 20260710  # 指定区间（日期 YYYYMMDD 无横杠）
+tzzb analysis dist                   # 持仓分布（按市值占比）
+tzzb analysis rate                   # 各股票账户仓位率
+tzzb bank list                       # 银证转账明细
+tzzb calendar month                  # 盈亏月历（某月每日）
+tzzb calendar year                   # 盈亏年视图（某年每月）
 tzzb trend show                      # 资产趋势（默认 30 天，最近 10 条）
 tzzb trend show -a 国 -d 7           # 过滤账户，查看 7 天趋势
 tzzb trend show -d 365 -l 0          # 查看全部历史数据（约 4 个月，89 个交易日）

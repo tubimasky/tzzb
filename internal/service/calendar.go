@@ -163,9 +163,22 @@ func (s *CalendarService) BuildMonthGrid(res *api.CalendarResult, month string) 
 }
 
 // TopCodes 返回区间内盈亏绝对值最大的前 n 只标的（按盈亏降序）。
-func (s *CalendarService) TopCodes(res *api.CalendarResult, n int) []api.CalendarCodePL {
-	codes := make([]api.CalendarCodePL, len(res.Codes))
-	copy(codes, res.Codes)
+// cat 为 stock 只留股票、fund 只留基金、其它（total）不过滤。
+func (s *CalendarService) TopCodes(res *api.CalendarResult, n int, cat string) []api.CalendarCodePL {
+	var codes []api.CalendarCodePL
+	for _, c := range res.Codes {
+		switch cat {
+		case "stock":
+			if c.Type == "fund" {
+				continue
+			}
+		case "fund":
+			if c.Type != "fund" {
+				continue
+			}
+		}
+		codes = append(codes, c)
+	}
 	sort.Slice(codes, func(i, j int) bool {
 		return codes[i].ProfitLoss > codes[j].ProfitLoss
 	})

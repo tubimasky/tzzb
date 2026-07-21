@@ -13,11 +13,46 @@ import (
 )
 
 var (
-	calendarAccount string
-	calendarMonth   string
-	calendarYear    string
-	calendarTop     int
+	calendarAccount  string
+	calendarMonth    string
+	calendarYear     string
+	calendarTop      int
+	calendarCategory string
 )
+
+// validateCalendarCategory 校验 --category 取值。
+func validateCalendarCategory(cat string) error {
+	switch cat {
+	case "total", "stock", "fund":
+		return nil
+	default:
+		return fmt.Errorf("category 只能是 total/stock/fund，得到: %s", cat)
+	}
+}
+
+// pickPL 按类别取当日/当月盈亏值。
+func pickPL(total, stock, fund float64, cat string) float64 {
+	switch cat {
+	case "stock":
+		return stock
+	case "fund":
+		return fund
+	default:
+		return total
+	}
+}
+
+// categoryLabel 返回类别的中文标签。
+func categoryLabel(cat string) string {
+	switch cat {
+	case "stock":
+		return "股票"
+	case "fund":
+		return "基金"
+	default:
+		return "总盈亏"
+	}
+}
 
 func getCalendarService() *service.CalendarService {
 	return service.NewCalendarService(apiClient)
@@ -33,6 +68,11 @@ var calendarMonthCmd = &cobra.Command{
 	Use:   "month",
 	Short: "月历视图（某月每日盈亏）",
 	Run: func(cmd *cobra.Command, args []string) {
+		if err := validateCalendarCategory(calendarCategory); err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+			os.Exit(1)
+		}
+
 		svc := getCalendarService()
 		res, month, err := svc.LoadMonth(calendarAccount, calendarMonth)
 		if err != nil {
@@ -57,18 +97,18 @@ var calendarMonthCmd = &cobra.Command{
 			for _, c := range week {
 				row = append(row, formatter.CalendarCell{
 					Day:     c.Day,
-					TotalPL: c.TotalPL,
+					Value:   pickPL(c.TotalPL, c.StockPL, c.FundPL, calendarCategory),
 					HasData: c.HasData,
 				})
 			}
 			weeks = append(weeks, row)
 		}
-		formatter.RenderMonthCalendar(grid.Year, grid.Month, weeks)
+		formatter.RenderMonthCalendar(grid.Year, grid.Month, weeks, categoryLabel(calendarCategory))
 
-		printCalendarSummary(res)
+		printCalendarSummary(res, calendarCategory)
 
 		if calendarTop != 0 {
-			renderTopCodes(svc, res)
+			renderTopCodes(svc, res, calendarCategory)
 		}
 	},
 }
@@ -77,6 +117,11 @@ var calendarYearCmd = &cobra.Command{
 	Use:   "year",
 	Short: "年视图（某年每月盈亏）",
 	Run: func(cmd *cobra.Command, args []string) {
+		if err := validateCalendarCategory(calendarCategory); err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+			os.Exit(1)
+		}
+
 		svc := getCalendarService()
 		res, _, err := svc.LoadYear(calendarAccount, calendarYear)
 		if err != nil {
@@ -89,16 +134,23 @@ var calendarYearCmd = &cobra.Command{
 			return
 		}
 
-		renderYearTable(res)
-		printCalendarSummary(res)
+		renderYearTable(res, calendarCategory)
+		printCalendarSummary(res, calendarCategory)
 
 		if calendarTop != 0 {
-			renderTopCodes(svc, res)
+			renderTopCodes(svc, res, calendarCategory)
 		}
 	},
 }
 
-func printCalendarSummary(res *api.CalendarResult) {
+func printCalendarSummary(res *api.CalendarResult, cat string) {
+	if cat == "stock" || cat == "fund" {
+		fmt.Printf("\n区间合计  %s: %s\n",
+			categoryLabel(cat),
+			formatter.ColorNum(pickPL(res.TotalPL, res.StockPL, res.FundPL, cat)),
+		)
+		return
+	}
 	fmt.Printf("\n区间合计  总盈亏: %s | 股票: %s | 基金: %s",
 		formatter.ColorNum(res.TotalPL),
 		formatter.ColorNum(res.StockPL),
@@ -110,8 +162,8 @@ func printCalendarSummary(res *api.CalendarResult) {
 	fmt.Println()
 }
 
-func renderTopCodes(svc *service.CalendarService, res *api.CalendarResult) {
-	codes := svc.TopCodes(res, calendarTop)
+func renderTopCodes(svc *service.CalendarService, res *api.CalendarResult, cat string) {
+	codes := svc.TopCodes(res, calendarTop, cat)
 	var rows []formatter.CodePLRow
 	for _, c := range codes {
 		rows = append(rows, formatter.CodePLRow{
@@ -124,9 +176,8 @@ func renderTopCodes(svc *service.CalendarService, res *api.CalendarResult) {
 	formatter.RenderCodePL(fmt.Sprintf("区间个股盈亏 Top %d", calendarTop), rows)
 }
 
-func renderYearTable(res *api.CalendarResult) {
+func renderYearTable(res *api.CalendarResult, cat string) {
 	col := formatter.ColorNum
-	headers := []string{"月份", "总盈亏", "股票", "基金"}
 
 	points := make([]api.CalendarPoint, len(res.Points))
 	copy(points, res.Points)
@@ -134,14 +185,32 @@ func renderYearTable(res *api.CalendarResult) {
 		return points[i].Date < points[j].Date
 	})
 
+	monthLabel := func(date string) string {
+		if len(date) == 6 {
+			return date[:4] + "-" + date[4:]
+		}
+		return date
+	}
+
+	// stock/fund：只展示月份 + 选中类别两列。
+	if cat == "stock" || cat == "fund" {
+		headers := []string{"月份", categoryLabel(cat)}
+		var rows [][]string
+		for _, p := range points {
+			rows = append(rows, []string{
+				monthLabel(p.Date),
+				col(pickPL(p.TotalPL, p.StockPL, p.FundPL, cat)),
+			})
+		}
+		formatter.RenderTable(headers, rows, formatter.WithBorder(true))
+		return
+	}
+
+	headers := []string{"月份", "总盈亏", "股票", "基金"}
 	var rows [][]string
 	for _, p := range points {
-		month := p.Date
-		if len(p.Date) == 6 {
-			month = p.Date[:4] + "-" + p.Date[4:]
-		}
 		rows = append(rows, []string{
-			month,
+			monthLabel(p.Date),
 			col(p.TotalPL),
 			col(p.StockPL),
 			col(p.FundPL),
@@ -168,8 +237,10 @@ func init() {
 	calendarMonthCmd.Flags().StringVarP(&calendarAccount, "account", "a", "", "按账户名过滤（模糊匹配），默认全部账户汇总")
 	calendarMonthCmd.Flags().StringVarP(&calendarMonth, "month", "m", "", "月份 YYYYMM，默认当前月")
 	calendarMonthCmd.Flags().IntVarP(&calendarTop, "top", "t", 10, "显示区间个股盈亏 Top N，0 表示不显示")
+	calendarMonthCmd.Flags().StringVarP(&calendarCategory, "category", "c", "total", "展示类别: total(总)/stock(股票)/fund(基金)")
 
 	calendarYearCmd.Flags().StringVarP(&calendarAccount, "account", "a", "", "按账户名过滤（模糊匹配），默认全部账户汇总")
 	calendarYearCmd.Flags().StringVarP(&calendarYear, "year", "y", "", "年份 YYYY，默认当前年")
 	calendarYearCmd.Flags().IntVarP(&calendarTop, "top", "t", 10, "显示区间个股盈亏 Top N，0 表示不显示")
+	calendarYearCmd.Flags().StringVarP(&calendarCategory, "category", "c", "total", "展示类别: total(总)/stock(股票)/fund(基金)")
 }

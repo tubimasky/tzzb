@@ -8,9 +8,10 @@ import (
 )
 
 // CalendarCell 是月历渲染需要的单元格数据（与 service.DayCell 解耦）。
+// Value 是被选中类别（总/股票/基金）的当日盈亏。
 type CalendarCell struct {
 	Day     int
-	TotalPL float64
+	Value   float64
 	HasData bool
 }
 
@@ -21,9 +22,9 @@ var weekdayHeaders = []string{"一", "二", "三", "四", "五", "六", "日"}
 const cellWidth = 12
 
 // RenderMonthCalendar 渲染月历网格：每个格子上面是日期，下面是当日盈亏（红涨绿跌）。
-// weeks 每个元素是一周 7 个 cell。
-func RenderMonthCalendar(year, month int, weeks [][]CalendarCell) {
-	color.New(color.Bold).Printf("\n%d 年 %d 月 盈亏日历\n\n", year, month)
+// weeks 每个元素是一周 7 个 cell；categoryLabel 是展示类别标签（总盈亏/股票/基金），加在标题上。
+func RenderMonthCalendar(year, month int, weeks [][]CalendarCell, categoryLabel string) {
+	color.New(color.Bold).Printf("\n%d 年 %d 月 盈亏日历（%s）\n\n", year, month, categoryLabel)
 
 	// 表头
 	var head []string
@@ -46,8 +47,8 @@ func RenderMonthCalendar(year, month int, weeks [][]CalendarCell) {
 			if !cell.HasData {
 				plLine = append(plLine, centerText("·", cellWidth))
 			} else {
-				plStr := fmt.Sprintf("%+.0f", cell.TotalPL)
-				plLine = append(plLine, centerColorText(plStr, cellWidth, cell.TotalPL))
+				plStr := fmt.Sprintf("%+.0f", cell.Value)
+				plLine = append(plLine, centerColorText(plStr, cellWidth, cell.Value))
 			}
 		}
 		fmt.Println(strings.Join(dayLine, " "))

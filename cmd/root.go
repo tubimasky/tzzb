@@ -43,6 +43,7 @@ func init() {
 	rootCmd.AddCommand(exportCmd)
 	rootCmd.AddCommand(trendCmd)
 	rootCmd.AddCommand(bankCmd)
+	rootCmd.AddCommand(calendarCmd)
 }
 
 // 在命令执行前设置全局 formatter 配置

@@ -29,6 +29,10 @@ const (
 	epMergeDayTrading  = "/caishen_fund/pc/account/v1/merge_day_trading" // 当日成交，算今日盈亏用
 	epAssetTrend       = "/caishen_fund/pc/asset/v1/asset_trend"       // 资产趋势曲线
 	epBankHistory      = "/caishen_fund/pc/asset/v1/query_bank_history" // 银证转账历史
+
+	epStockGetAccounts = "/caishen_fund/stock/getAccounts"              // 股票账户列表（含 zjzh 资金账号）
+	epCalDaily         = "/caishen_fund/combineCalendar/dailyProfitloss"   // 盈亏日历：某月各日
+	epCalMonthly       = "/caishen_fund/combineCalendar/monthlyProfitloss" // 盈亏日历：某年各月
 )
 
 // 当日成交 czdm（与插件 De 常量一致）

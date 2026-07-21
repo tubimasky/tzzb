@@ -14,6 +14,7 @@ type Account struct {
 	FundIDCap    string     `json:"fundId"` // account_list 里 fund 账户用大写 I
 	FundName     string     `json:"fundname"`
 	FundCode     string     `json:"fundcode"`
+	FundType     string     `json:"type"` // account_list 里 fund 账户的 type（manFund/ijj 等），盈亏日历聚合参数用
 	FundKey      string     `json:"fund_key"`
 	RzrqFundKey  string     `json:"rzrq_fund_key"`
 	TotalAssets  Num        `json:"total_assets"`

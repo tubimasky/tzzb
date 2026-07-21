@@ -45,6 +45,7 @@ func init() {
 	rootCmd.AddCommand(bankCmd)
 	rootCmd.AddCommand(calendarCmd)
 	rootCmd.AddCommand(analysisCmd)
+	rootCmd.AddCommand(detailCmd)
 }
 
 // 在命令执行前设置全局 formatter 配置

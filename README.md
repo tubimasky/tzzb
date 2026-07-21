@@ -53,6 +53,8 @@ tzzb account list
 ```bash
 tzzb position list              # 全部账户的持仓
 tzzb position list -a 华宝      # 只看名字含"华宝"的账户（模糊匹配）
+tzzb detail 159227              # 单只钻取：合并明细/建仓记录/历史成交/清仓汇总
+tzzb detail 159227 -i           # 交互式界面（Tab 切换四块、多账户切换、成交表可滚动）
 ```
 
 ### 4. 交易流水
@@ -102,6 +104,7 @@ tzzb export position -f json
 | `profit range` | 区间盈亏（每日 + 区间个股盈亏） | `-a` / `-s` 起始 / `-e` 结束（YYYYMMDD）/ `-t` Top N |
 | `analysis dist` | 持仓分布（按市值占比） | `-a` / `-t` Top N |
 | `analysis rate` | 账户仓位率 | `-a` |
+| `detail <代码>` | 单只股票钻取明细（合并/建仓/成交/清仓） | `-a` / `--from` / `--to`（YYYYMMDD）/ `-i` 交互式 TUI |
 | `trend show` | 单账户资产趋势 | `-a` / `-d` 天数 / `-b` 大盘对比 |
 | `trend summary` | 聚合资产趋势 | `-t all\|stock\|fund` / `-d` / `-b` |
 | `bank list` | 银证转账明细 | `-a` / `-d` 天数 |

@@ -543,7 +543,7 @@ func (c *Client) GetAssetTrend(acc Account, days int) ([]AssetTrendPoint, error)
 
 从 `~/Downloads/tzzb-plugin` 的 JS bundle 里扒到的全部 `/caishen_fund/...` 端点。所有路径需拼公共前缀 `/caishen_httpserver/tzzb`（见 §1.1）。
 
-#### 已接入（16 个）
+#### 已接入（21 个）
 
 | path | 用途 | 对应命令 |
 |---|---|---|
@@ -564,6 +564,10 @@ func (c *Client) GetAssetTrend(acc Account, days int) ([]AssetTrendPoint, error)
 | `stock/profitlossByCodeMerge` | 区间每日盈亏 + 个股盈亏 | `profit range` |
 | `stockAnalysisSummary/position_distribution` | 持仓分布（按市值） | `analysis dist` |
 | `stockAnalysisSummary/accountPositionRate` | 账户仓位率 | `analysis rate` |
+| `stock_position/v1/merge_position_query` | 单只合并明细 | `detail` |
+| `stock_position/v1/total_position_query` | 单只建仓记录 | `detail` |
+| `stock_position/v1/stock_history_query` | 单只历史成交 | `detail` |
+| `stock_position/v1/clear_position_query` | 单只清仓汇总 | `detail` |
 
 #### 未接入 — 只读查询类（有做成命令的价值）
 
@@ -598,12 +602,12 @@ stockAnalysisSummary/v1/duration_rate        持有期收益率
 stockAnalysisSummary/v1/select_analysis      选股分析
 ```
 
-**持仓查询**（比 stock_position 更细）
+**单只股票钻取**（都要 stock_code + 账户坐标，见 §3.12）
 ```
-stock_position/v1/total_position_query       总持仓
-stock_position/v1/stock_history_query        历史持仓
-stock_position/v1/clear_position_query       清仓记录
-stock_position/v1/merge_position_query       合并持仓
+stock_position/v1/merge_position_query       单只合并明细      ✅ detail
+stock_position/v1/total_position_query       单只建仓记录      ✅ detail
+stock_position/v1/stock_history_query        单只历史成交      ✅ detail
+stock_position/v1/clear_position_query       单只清仓汇总      ✅ detail
 ```
 
 **盈亏日历/月历视图**
@@ -742,6 +746,33 @@ zjzh, qsid, fundkey=<stock 账户 fund_key>, rzrq_fund_key=, manual_id, from_pc=
 响应：
 - position_distribution → `total_value` + `position_list[{stock_code, stock_name, stock_value, market}]`。`total_value` 偶为 0，占比分母用明细累加兜底。
 - accountPositionRate → `account_list[{name, qsmc, stock_total, money_remain, zjzh, ...}]`，仓位率 = stock_total / (stock_total + money_remain)。
+
+### 3.12 单只股票钻取明细（已接入，抓包验证）
+
+对应命令 `detail <代码>`。源自插件 `tzzbWeb/handstock/itemDetail.*.bundle.js` 的四个接口，全都是「钻取**单只**股票」，不是列全部持仓。命令一次聚合四块：合并明细 / 建仓记录 / 历史成交 / 清仓汇总。
+
+#### 账户坐标（关键，与前面三系不同）
+
+这四个接口**不走** `BuildCalendarParams` 的全账户合算口径，而是**单账户 + 单代码**定位。共用参数：
+```
+manualid, fundkey, rzrq_fundkey, stock_code, stock_account, from_pc=1
+```
+- 字段名**去掉下划线**：`fundkey`/`rzrq_fundkey`/`manualid`（对应 account_list 的 `fund_key`/`rzrq_fund_key`/`manual_id`）。
+- 账户坐标只需三者之一（普通账户填 `fundkey` 即可），**`stock_account` 实测可留空**——插件多数场景也传空串，服务端靠 `fundkey + stock_code` 匹配。
+- CLI 的做法：先 `GetAccountList` 扫描各股票账户持仓行，找出持有该 `stock_code` 的账户，取其 `fund_key`/`rzrq_fund_key`/`manual_id` 作坐标；多账户命中就逐个钻取。fund 账户不参与（按 stock_code 匹配无意义）。
+
+#### 四个接口
+
+| path | 语义 | 额外参数 | 响应要点 |
+|---|---|---|---|
+| `stock_position/v1/merge_position_query` | 单只合并明细 | — | 顶层对象：`hold_days`/`price_buy_av`/`price_curr`/`market_value`/`zcb`(总成本)/`yke`(浮盈)/`profit_rate`(小数)/`fee`/`come_profit`/`clear_flag`(0/1) |
+| `stock_position/v1/total_position_query` | 建仓记录 | — | `list[{start_date(建仓日 YYYYMMDD), end_date(持有中为空), profit, profit_rate}]` |
+| `stock_position/v1/stock_history_query` | 逐笔历史成交 | `start_date`/`end_date` | `list[{trans_date, transDateTime, op(1买/2卖), trans_price, trans_count, trans_amount, trans_fee, profit, account_name}]` |
+| `stock_position/v1/clear_position_query` | 清仓汇总 | `start_date`/`end_date` | 顶层：`total_buy`/`total_sell`/`total_profit`/`total_profit_rate`/`hold_days`/`fee`。**未清仓时各金额为 0**（CLI 用 `HasData()` 判断，为空则跳过不渲染） |
+
+**日期格式**：history/clear 的 `start_date`/`end_date` 用 **`YYYYMMDD` 无横杠**（与梯队 A 一致，与 combineCalendar 相反）。插件里由 `String(jcrq).replace(/-/g,'')` 得到。CLI 默认区间 = 建仓记录最早 `start_date` → 今天，可用 `--from/--to` 覆盖，都拿不到则回落近一年。
+
+**验证**：实测 `merge` 的 `market_value` = `count × price_curr`（5000×0.941=4705），`trans_amount` 与 `trans_count×trans_price` 一致；未清仓股 `clear_position_query` 返回全 0，`total_position_query` 给出建仓日。
 
 ### 3.9 全量原始清单（附录，共 227 条，一条不落）
 
@@ -1363,6 +1394,9 @@ tzzb profit range                    # 区间每日盈亏 + 区间个股盈亏�
 tzzb profit range -s 20260701 -e 20260710  # 指定区间（日期 YYYYMMDD 无横杠）
 tzzb analysis dist                   # 持仓分布（按市值占比）
 tzzb analysis rate                   # 各股票账户仓位率
+tzzb detail 159227                   # 单只股票钻取明细（合并/建仓/成交/清仓）
+tzzb detail 159227 -i                # 交互式 TUI（Tab 切换四块、多账户切换、成交表可滚动）
+tzzb detail 600519 --from 20260101   # 指定历史成交/清仓查询区间
 tzzb bank list                       # 银证转账明细
 tzzb calendar month                  # 盈亏月历（某月每日）
 tzzb calendar year                   # 盈亏年视图（某年每月）

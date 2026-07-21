@@ -42,6 +42,12 @@ const (
 	// 股票仓位分析（梯队 B）。fundkey 用 stock 账户 fund_key（非基金 fundid）。
 	epAnalysisPosDist  = "/caishen_fund/stockAnalysisSummary/position_distribution" // 持仓分布（按市值）
 	epAnalysisPosRate  = "/caishen_fund/stockAnalysisSummary/accountPositionRate"   // 账户仓位率
+
+	// 单只股票钻取明细（handstock/itemDetail 系）。坐标：fundkey/rzrq_fundkey/manualid + stock_code。
+	epMergePosQuery     = "/caishen_fund/stock_position/v1/merge_position_query" // 合并持仓明细
+	epTotalPosQuery     = "/caishen_fund/stock_position/v1/total_position_query" // 建仓记录
+	epStockHistoryQuery = "/caishen_fund/stock_position/v1/stock_history_query"  // 逐笔历史成交
+	epClearPosQuery     = "/caishen_fund/stock_position/v1/clear_position_query" // 清仓汇总
 )
 
 // 当日成交 czdm（与插件 De 常量一致）

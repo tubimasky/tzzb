@@ -28,6 +28,7 @@ const (
 	epGetQuotes        = "/caishen_fund/invest/getQuotes"              // 插件 requestPriceInfo 同源
 	epMergeDayTrading  = "/caishen_fund/pc/account/v1/merge_day_trading" // 当日成交，算今日盈亏用
 	epAssetTrend       = "/caishen_fund/pc/asset/v1/asset_trend"       // 资产趋势曲线
+	epBankHistory      = "/caishen_fund/pc/asset/v1/query_bank_history" // 银证转账历史
 )
 
 // 当日成交 czdm（与插件 De 常量一致）

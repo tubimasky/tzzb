@@ -111,6 +111,11 @@ type moneyHistoryPage struct {
 func (c *Client) GetMoneyHistory(acc Account) ([]map[string]any, error) {
 	end := time.Now()
 	start := end.AddDate(0, -3, 0)
+	return c.GetMoneyHistoryRange(acc, start, end)
+}
+
+// GetMoneyHistoryRange 拉取某账户指定日期范围的资金/交易流水（自动翻页，最多 20 页）。
+func (c *Client) GetMoneyHistoryRange(acc Account, start, end time.Time) ([]map[string]any, error) {
 	base := map[string]string{
 		"manual_id":     acc.ManualID,
 		"fund_key":      acc.FundKey,
@@ -232,6 +237,8 @@ type AssetTrendPoint struct {
 	Cash         float64 `json:"cash"`          // 现金
 	MarketValue  float64 `json:"market_value"`  // 市值
 	PositionRate float64 `json:"position_rate"` // 仓位（小数）
+	FundIn       float64 `json:"fund_in"`       // 资金流入
+	FundOut      float64 `json:"fund_out"`      // 资金流出
 }
 
 // GetAssetTrend 拉取账户资产趋势曲线数据。
@@ -333,6 +340,14 @@ func (c *Client) GetAssetTrend(acc Account, days int) ([]AssetTrendPoint, error)
 func parseAssetTrendData(raw []map[string]any, initZczs float64) []AssetTrendPoint {
 	var points []AssetTrendPoint
 
+	// DEBUG: 输出前几条原始数据
+	if os.Getenv("DEBUG") != "" && len(raw) > 0 {
+		fmt.Fprintf(os.Stderr, "DEBUG: 原始数据样例 (前3条):\n")
+		for i := 0; i < len(raw) && i < 3; i++ {
+			fmt.Fprintf(os.Stderr, "  [%d] %+v\n", i, raw[i])
+		}
+	}
+
 	for _, m := range raw {
 		p := AssetTrendPoint{}
 
@@ -372,8 +387,8 @@ func parseAssetTrendData(raw []map[string]any, initZczs float64) []AssetTrendPoi
 		}
 
 		// 资金流入流出
-		fundIn := parseFloat(m, "fundIn", "fund_in")
-		fundOut := parseFloat(m, "fundOut", "fund_out")
+		p.FundIn = parseFloat(m, "fundIn", "fund_in")
+		p.FundOut = parseFloat(m, "fundOut", "fund_out")
 
 		// 现金：从 asset - profit 估算（如果没有直接字段）
 		cash := parseFloat(m, "cash", "money_remain", "available", "moneyRemain")
@@ -387,7 +402,7 @@ func parseAssetTrendData(raw []map[string]any, initZczs float64) []AssetTrendPoi
 		marketValue := parseFloat(m, "market_value", "value", "total_value", "marketValue")
 		if marketValue == 0 && p.TotalAsset > 0 {
 			// 如果有资金流入流出，调整后的市值
-			if fundIn > 0 || fundOut > 0 {
+			if p.FundIn > 0 || p.FundOut > 0 {
 				// 简化：不考虑资金流，直接用总资产作为市值近似
 				marketValue = p.TotalAsset
 			} else if cash > 0 {
@@ -419,6 +434,91 @@ func parseAssetTrendData(raw []map[string]any, initZczs float64) []AssetTrendPoi
 	}
 
 	return points
+}
+
+// BankTransfer 银证转账记录
+type BankTransfer struct {
+	Date      string  // 日期
+	Direction string  // 转账方向：转入/转出
+	Amount    float64 // 金额
+	Account   string  // 账户名
+	OpCode    int     // 操作码（用于判断转入转出）
+}
+
+// GetBankHistory 获取银证转账历史
+// 注意：必须传 fund_key 参数才能查到数据
+func (c *Client) GetBankHistory(acc Account, startDate, endDate time.Time) ([]BankTransfer, error) {
+	params := map[string]string{
+		"userid":     c.uid,
+		"start_date": startDate.Format("2006-01-02"),
+		"end_date":   endDate.Format("2006-01-02"),
+	}
+
+	// 添加账户标识（fund_key 是必须的）
+	if acc.ManualID != "" {
+		params["manual_id"] = acc.ManualID
+	} else {
+		params["manual_id"] = ""
+	}
+
+	if acc.FundKey != "" {
+		params["fund_key"] = acc.FundKey
+	} else {
+		params["fund_key"] = ""
+	}
+
+	if acc.RzrqFundKey != "" {
+		params["rzrq_fund_key"] = acc.RzrqFundKey
+	}
+
+	ex, err := c.call(epBankHistory, params)
+	if err != nil {
+		return nil, err
+	}
+
+	// 响应结构：{"stock": [...]}
+	var wrapper struct {
+		Stock []map[string]any `json:"stock"`
+	}
+	if err := json.Unmarshal(ex, &wrapper); err != nil {
+		return nil, fmt.Errorf("解析银证转账数据失败: %v", err)
+	}
+
+	var transfers []BankTransfer
+	for _, r := range wrapper.Stock {
+		date := parseString(r, "entry_date", "date", "trade_date")
+		opName := parseString(r, "op_name", "direction", "type")
+		amount := parseFloat(r, "entry_money", "amount", "money")
+		opCode := int(parseFloat(r, "op"))
+
+		if date == "" || amount == 0 {
+			continue
+		}
+
+		transfers = append(transfers, BankTransfer{
+			Date:      date,
+			Direction: opName,
+			Amount:    amount,
+			Account:   acc.Name(),
+			OpCode:    opCode,
+		})
+	}
+
+	return transfers, nil
+}
+
+// parseString 从 map 中按候选键顺序提取第一个非空字符串
+func parseString(m map[string]any, keys ...string) string {
+	for _, k := range keys {
+		v, ok := m[k]
+		if !ok || v == nil {
+			continue
+		}
+		if s, ok := v.(string); ok && s != "" {
+			return strings.TrimSpace(s)
+		}
+	}
+	return ""
 }
 
 // parseFloat 从 map 中按候选键顺序提取第一个非零数值。

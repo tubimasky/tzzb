@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/fatih/color"
 	"github.com/liyanran/tzzb-cli/internal/formatter"
@@ -72,6 +73,10 @@ func (s *TrendService) LoadTrendForAccounts(accounts []api.Account, days int) []
 		if err != nil {
 			continue
 		}
+
+		// 加载银证转账数据并填充到趋势点中
+		points = s.enrichTrendWithBankTransfers(acc, points, days)
+
 		results = append(results, TrendData{
 			Account:  acc.Name(),
 			Category: acc.Category,
@@ -80,6 +85,51 @@ func (s *TrendService) LoadTrendForAccounts(accounts []api.Account, days int) []
 		})
 	}
 	return results
+}
+
+// enrichTrendWithBankTransfers 用银证转账数据丰富趋势点
+func (s *TrendService) enrichTrendWithBankTransfers(acc api.Account, points []api.AssetTrendPoint, days int) []api.AssetTrendPoint {
+	if len(points) == 0 {
+		return points
+	}
+
+	// 获取银证转账数据
+	endDate := time.Now()
+	startDate := endDate.AddDate(0, 0, -days-30) // 多查一些天数以确保覆盖
+
+	transfers, err := s.client.GetBankHistory(acc, startDate, endDate)
+	if err != nil {
+		return points // 获取失败时不处理，直接返回原始数据
+	}
+
+	if len(transfers) == 0 {
+		return points
+	}
+
+	// 按日期建立转账映射
+	transferMap := make(map[string]struct{ In, Out float64 })
+	for _, t := range transfers {
+		key := t.Date
+		entry := transferMap[key]
+		// 根据操作码判断：86=转入(收入)，87=转出(支出)
+		// 兼容旧的字符串判断
+		if t.OpCode == 86 || t.Direction == "银行转证券" || t.Direction == "收入" {
+			entry.In += t.Amount
+		} else if t.OpCode == 87 || t.Direction == "证券转银行" || t.Direction == "支出" {
+			entry.Out += t.Amount
+		}
+		transferMap[key] = entry
+	}
+
+	// 填充到趋势点
+	for i := range points {
+		if entry, ok := transferMap[points[i].Date]; ok {
+			points[i].FundIn = entry.In
+			points[i].FundOut = entry.Out
+		}
+	}
+
+	return points
 }
 
 // AggregateTrendData 聚合多个账户的趋势数据（按日期合并）
@@ -92,12 +142,17 @@ func (s *TrendService) AggregateTrendData(accounts []api.Account, days int) []ap
 			continue
 		}
 
+		// 加载银证转账数据并填充到趋势点中
+		points = s.enrichTrendWithBankTransfers(acc, points, days)
+
 		for _, p := range points {
 			if existing, ok := dateMap[p.Date]; ok {
 				existing.TotalAsset += p.TotalAsset
 				existing.Profit += p.Profit
 				existing.Cash += p.Cash
 				existing.MarketValue += p.MarketValue
+				existing.FundIn += p.FundIn
+				existing.FundOut += p.FundOut
 			} else {
 				dateMap[p.Date] = &api.AssetTrendPoint{
 					Date:        p.Date,
@@ -105,6 +160,8 @@ func (s *TrendService) AggregateTrendData(accounts []api.Account, days int) []ap
 					Profit:      p.Profit,
 					Cash:        p.Cash,
 					MarketValue: p.MarketValue,
+					FundIn:      p.FundIn,
+					FundOut:     p.FundOut,
 				}
 			}
 		}
@@ -348,6 +405,8 @@ func (s *TrendJSONService) ConvertTrendPointsToJSON(points []api.AssetTrendPoint
 			"cash":          p.Cash,
 			"market_value":  p.MarketValue,
 			"position_rate": p.PositionRate,
+			"fund_in":       p.FundIn,
+			"fund_out":      p.FundOut,
 		}
 
 		// 计算变化量
@@ -356,10 +415,11 @@ func (s *TrendJSONService) ConvertTrendPointsToJSON(points []api.AssetTrendPoint
 			item["asset_change"] = change
 			item["day_profit"] = change
 
-			// 持仓盈亏率
+			// 持仓盈亏率计算（扣除资金流入流出后的市值涨跌幅）
 			if points[actualIdx-1].MarketValue > 0 {
 				marketValueChange := p.MarketValue - points[actualIdx-1].MarketValue
-				rate := marketValueChange / points[actualIdx-1].MarketValue * 100
+				fundNetIn := p.FundIn - p.FundOut
+				rate := (marketValueChange - fundNetIn) / points[actualIdx-1].MarketValue * 100
 				item["holding_profit_rate"] = rate
 			}
 		}
@@ -448,10 +508,11 @@ func (s *TrendRenderService) RenderTrendTable(points []api.AssetTrendPoint, limi
 			change := p.TotalAsset - points[actualIdx-1].TotalAsset
 			assetChange = formatter.ColorNum(change)
 
-			// 持仓盈亏率 = (当日市值 - 前日市值) / 前日市值
+			// 持仓盈亏率 = (市值变化 - 资金净流入) / 前日市值
 			if points[actualIdx-1].MarketValue > 0 {
 				marketValueChange := p.MarketValue - points[actualIdx-1].MarketValue
-				rate := marketValueChange / points[actualIdx-1].MarketValue
+				fundNetIn := p.FundIn - p.FundOut
+				rate := (marketValueChange - fundNetIn) / points[actualIdx-1].MarketValue
 				holdingProfitRate = formatter.ColorPctRaw(rate)
 
 				// 如果有基准数据，计算超额收益

@@ -42,6 +42,7 @@ func init() {
 	rootCmd.AddCommand(profitCmd)
 	rootCmd.AddCommand(exportCmd)
 	rootCmd.AddCommand(trendCmd)
+	rootCmd.AddCommand(bankCmd)
 }
 
 // 在命令执行前设置全局 formatter 配置

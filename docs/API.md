@@ -539,30 +539,666 @@ func (c *Client) GetAssetTrend(acc Account, days int) ([]AssetTrendPoint, error)
    - API 不直接返回现金和市值
    - 市值 ≈ 总资产（假设全仓）或 总资产 - 现金
 
-### 3.8 其它已知但未接入的接口
+### 3.8 插件全量接口清单（从 tzzb-plugin JS 扒取）
 
-从插件 JS 里扒到的全部端点（`/caishen_fund/...`），未接入的可按需开发：
+从 `~/Downloads/tzzb-plugin` 的 JS bundle 里扒到的全部 `/caishen_fund/...` 端点。所有路径需拼公共前缀 `/caishen_httpserver/tzzb`（见 §1.1）。
+
+#### 已接入（10 个）
+
+| path | 用途 | 对应命令 |
+|---|---|---|
+| `invest/getQuotes` | 行情报价 | 持仓实时重算 |
+| `pc/account/v1/account_list` | 账户列表 | `account list` |
+| `pc/account/v1/fund_card` | 基金账户卡 | `account` 富化 |
+| `pc/account/v1/stock_card` | 股票账户卡 | `account` 富化 |
+| `pc/account/v1/get_money_history` | 资金/交易流水 | `trade` |
+| `pc/account/v1/merge_day_trading` | 当日成交 | 持仓实时重算 |
+| `pc/asset/v1/asset_trend` | 资产趋势曲线 | `trend` |
+| `pc/asset/v1/fund_position` | 基金持仓 | `position` |
+| `pc/asset/v1/stock_position` | 股票持仓 | `position` |
+| `pc/asset/v1/query_bank_history` | 银证转账 | `bank` |
+
+#### 未接入 — 只读查询类（有做成命令的价值）
+
+**股票盈亏分析**（当前 `profit` 覆盖很浅，最值得补）
+```
+stock/accountProfitloss              账户维度盈亏
+stock/accountProfitlossMerge         账户盈亏（合并）
+stock/dailyStockProfitLoss           每日个股盈亏
+stock/monthlyProfitLoss              月度盈亏
+stock/monthlyProfitLossMerge         月度盈亏（合并）
+stock/monthlyStockProfitLoss         月度个股盈亏
+stock/profitlossByCode               按股票代码查盈亏
+stock/profitlossByCodeMerge          按代码盈亏（合并）
+stock/v1/yearly_profit_loss          年度盈亏
+stock/v1/yearly_stock_profit_loss    年度个股盈亏
+stock/v1/distribution_merge          分布（合并）
+stock/bs                             买卖点记录
+stock/asset                          股票资产
+stock/index                          指数
+stock/getAccounts                    账户列表（股票侧）
+```
+
+**股票分析汇总**（仓位/分布/统计）
+```
+stockAnalysisSummary/analysis                综合分析
+stockAnalysisSummary/summaryInfo             汇总信息
+stockAnalysisSummary/statistics              统计指标
+stockAnalysisSummary/dayAnalysis             当日分析
+stockAnalysisSummary/accountPositionRate     账户仓位率
+stockAnalysisSummary/position_distribution   持仓分布
+stockAnalysisSummary/v1/duration_rate        持有期收益率
+stockAnalysisSummary/v1/select_analysis      选股分析
+```
+
+**持仓查询**（比 stock_position 更细）
+```
+stock_position/v1/total_position_query       总持仓
+stock_position/v1/stock_history_query        历史持仓
+stock_position/v1/clear_position_query       清仓记录
+stock_position/v1/merge_position_query       合并持仓
+```
+
+**盈亏日历/月历视图**
+```
+combineCalendar/dailyProfitloss     组合每日盈亏
+combineCalendar/monthlyProfitloss   组合月度盈亏
+combineCalendar/accountProfitloss   组合账户盈亏
+fundCalendar/dayProfit              基金每日收益
+fundCalendar/monthView              基金月视图
+fundCalendar/yearView               基金年视图
+fundCalendar/fundidListH5           基金 ID 列表
+```
+
+**基金分析 & 穿透**（fund 侧几乎没做）
+```
+fundAnalysisSummary/analysis         基金分析
+fundAnalysisSummary/summaryInfo      基金汇总
+fundAnalysisSummary/position         基金持仓分析
+fundAnalysisSummary/moneyChange      资金变动
+fundAnalysisSummary/fundDistribution 基金分布
+fundPenetrate/heavilyHeldShares      基金重仓穿透
+fundPenetrate/reportThrough          穿透报告
+fundPenetrate/box                    穿透箱体
+fundPenetrate/dateList               穿透日期列表
+fund_quota/v1/history_nav            历史净值
+fund_quota/v1/nav_graph              净值曲线
+fund_quota/v1/heavy_held_stock       重仓股
+fund_quota/v1/position_detail        持仓明细
+fund_quota/v1/stage_increase_rate    阶段涨幅
+fund_quota/v1/bs_point               买卖点
+fund_quota/v1/distribution           分布
+fund_quota/v1/gz_graph               估值曲线
+fund_quota/v1/trans_history          交易历史
+fund_summary/position/v1/history_date_span   持仓日期跨度
+fund_summary/position/v2/query_history_month 历史月度持仓
+valuation/fundMarket                 基金市场估值
+```
+
+**行情/市场辅助**
+```
+stock/info/v1/detail                 个股详情
+stock/market/v1/rate                 市场涨跌
+stock/market/v1/ths_market           同花顺市场分类
+stock_common/v1/hk_rate              港股汇率
+stock_common/v1/hk_rate_list         港股汇率列表
+stock_common/v1/last_trading_day     最近交易日
+stock_common/v1/market_query         市场查询
+stockSummary/judgeHkStock            判断港股
+cloud/v1/stockdict/search            股票字典搜索
+```
+
+**自选（可做 watchlist 命令）**
+```
+optional/v3/get_stock_list           自选股列表
+optional/v3/get_fund_list            自选基金列表
+optional_stock/v2/group_position     自选分组持仓
+optional_stock/v2/history_curve      自选历史曲线
+optional_stock/v2/time_of_day        自选分时
+optionalStock/getAllInfo             自选股全部信息
+optionalFund/getAllInfo              自选基金全部信息
+```
+
+**交割单 / 组合 / 达人跟投**
+```
+delivery/v1/position_list            交割单持仓
+delivery/w/v1/daily_history          交割每日历史
+delivery/w/v1/history_filter         交割历史筛选
+fundGroup/selectMyAndSubscribeFundGroup 我的+订阅组合
+fundGroup/fundGroupInit              组合初始化
+leaderPosition/bs                    达人买卖点
+stock_radar/user/v1/history          雷达历史
+stock_radar/user/v1/range_detail     雷达区间明细
+community/personal_homepage/v1/view_homepage 个人主页
+```
+
+#### 未接入 — 增删改类（对查询型 CLI 无意义，仅记录）
 
 ```
-cloud/v1/stockdict                          common/v1/post_scan
-delivery/v1/position_list                   delivery/v1/update_position
-manual_stock/fee_config/v1/edit             manual_stock/fee_config/v1/query
-pc/account/v1/add_account                   pc/account/v1/del_account
-pc/account/v1/edit_account                  pc/account/v1/init
-pc/account/v1/init_fund                     pc/account/v1/qs_list
-pc/account/v1/status                        pc/account/v1/status_fund
-pc/account/v1/merge_day_trading             pc/account/v1/delete_money_history
-pc/account/v1/edit_money_history            pc/account/v1/add_money_history
+账户:   pc/account/v1/{add,del,edit}_account, init, init_fund, status, status_fund, qs_list
+资金:   pc/account/v1/{add,edit,delete}_money_history, edit_stock_position_history
+资产:   pc/asset/v1/{add_bank_history, add_money_history, add_stock_position,
+              clear_stock, delete_stock, fund_quota, merge_compare, time_share}
+手动股: manualstock/{addAccount, addBankHistory, addMoneyHistory, addPositionHistory,
+              deleteBankHistory, deleteMoneyHistory, deleteStockPosition, modifyRemain,
+              updateBankHistory, updateMoneyHistory, ...}
+手动基: manualFund/{addPositionList, bonusEdit, delPosition, editPosition, ...}
+定投:   fixedPlan/{addPlan, deletePlan, editPlan, editPlanStatus, planList, fixedHistory}
+自选:   optional{Stock,Fund}/{createGroup, deleteStock/Fund, editStock/Fund, importFund}
+组合:   fundGroup/{creatGroup, deleteFundGroup, updateGroupPosition, importAccounts}
+费用:   manual_stock/fee_config/v1/{edit, query}
+快照:   manual_stock/position_snapshot/v1/{add, delete, edit, edit_before}
+命令:   command/{decrypt, encrypt_new}
+水印:   common/v1/{query_watermark, upload_watermark}, invest/watermark
+其它:   common/v1/post_scan, common/fund_cal_{init,polling}, merge_config/v1/query_status
+```
+
+> **推荐优先做：** 股票盈亏分析（`stock/*ProfitLoss` 系列）、仓位分布（`stockAnalysisSummary/*`）、盈亏日历（`combineCalendar/*`）。三块都是纯查询、与现有 account/position/profit 同源，补齐后分析能力会完整很多。接入前需先抓真实请求参数与响应结构。
+
+### 3.9 全量原始清单（附录，共 227 条，一条不落）
+
+§3.8 是分类精选，此处为从插件 JS 扒到的全部 `/caishen_fund/...` 端点原样罗列（去掉 `caishen_fund/` 前缀，按一级模块字母序分组），保证完整无遗漏。调用前均需拼公共前缀 `/caishen_httpserver/tzzb`（见 §1.1）。
+
+**cloud**
+```
+cloud/get_user_customConfig
+cloud/v1/stockdict/search
+```
+
+**combineCalendar**
+```
+combineCalendar/accountProfitloss
+combineCalendar/dailyProfitloss
+combineCalendar/monthlyProfitloss
+```
+
+**command**
+```
+command/decrypt
+command/encrypt_new
+```
+
+**common**
+```
+common/fund_cal_init
+common/fund_cal_polling
+common/v1/post_scan
+common/v1/query_watermark
+common/v1/upload_watermark
+```
+
+**community_match**
+```
+community_match/v1/hold_stock_uid
+community_match/v1/hot_ranking_bs
+community_match/v1/query_upload_time
+community_match/v2/daily_history
+community_match/v2/my_match_simple
+```
+
+**community_share**
+```
+community_share/v1/change_bs_by_share
+community_share/v1/daily_history_by_share
+community_share/v1/uploadtime_by_share
+```
+
+**community**
+```
+community/content_provide/v1/get_optional_top_twenty
+community/personal_homepage/v1/view_homepage
+```
+
+**deletefund**
+```
+deletefund
+```
+
+**delivery_match**
+```
+delivery_match/v1/query_upload_time
+delivery_match/v1/query_upload_time_by_share
+```
+
+**delivery**
+```
+delivery/v1/position_list
+delivery/v1/update_position
+delivery/w/v1/daily_history
+delivery/w/v1/daily_historyByShare
+delivery/w/v1/history_filter
+delivery/w/v1/history_filterByShare
+```
+
+**fixedPlan**
+```
+fixedPlan/addPlan
+fixedPlan/deletePlan
+fixedPlan/editPlan
+fixedPlan/editPlanStatus
+fixedPlan/fixedHistory
+fixedPlan/planList
+fixedPlan/suspendFundAllPlan
+```
+
+**forward**
+```
+forward/v1/wencai_spec
+```
+
+**fund_quota**
+```
+fund_quota/v1/bs_point
+fund_quota/v1/distribution
+fund_quota/v1/gz_graph
+fund_quota/v1/heavy_held_stock
+fund_quota/v1/history_nav
+fund_quota/v1/nav_graph
+fund_quota/v1/position_detail
+fund_quota/v1/stage_increase_rate
+fund_quota/v1/trans_history
+```
+
+**fund_summary**
+```
+fund_summary/position/v1/history_date_span
+fund_summary/position/v2/query_history_month
+```
+
+**fundAnalysisSummary**
+```
+fundAnalysisSummary/analysis
+fundAnalysisSummary/fundDistribution
+fundAnalysisSummary/moneyChange
+fundAnalysisSummary/position
+fundAnalysisSummary/summaryInfo
+```
+
+**fundCalendar**
+```
+fundCalendar/dayProfit
+fundCalendar/fundidListH5
+fundCalendar/monthView
+fundCalendar/yearView
+```
+
+**fundGroup**
+```
+fundGroup/beforeChangePosition
+fundGroup/creatGroup
+fundGroup/deleteFundGroup
+fundGroup/fundGroupInit
+fundGroup/fundGroupPolling
+fundGroup/importAccounts
+fundGroup/selectMyAndSubscribeFundGroup
+fundGroup/updateGroupPosition
+```
+
+**fundPenetrate**
+```
+fundPenetrate/box
+fundPenetrate/dateList
+fundPenetrate/heavilyHeldShares
+fundPenetrate/reportThrough
+```
+
+**grid**
+```
+grid/v1/get_ths_market_by_code
+```
+
+**imitateProfit**
+```
+imitateProfit/stockCodePrice
+```
+
+**index**
+```
+index/v1/select_upgrade
+index/v1/stage
+```
+
+**interaction_match**
+```
+interaction_match/v1/change_bs
+```
+
+**invest**
+```
+invest/getQuotes
+invest/watermark
+```
+
+**leaderPosition**
+```
+leaderPosition/bs
+```
+
+**manage**
+```
+manage/stock
+```
+
+**manual（根）**
+```
+manual
+```
+
+**manual_fund**
+```
+manual_fund/history/v1/query_net_by_confirm
+manual_fund/history/v1/query_net_by_op
+```
+
+**manual_stock**
+```
+manual_stock/fee_config/v1/edit
+manual_stock/fee_config/v1/query
+manual_stock/position_snapshot/v1/add
+manual_stock/position_snapshot/v1/delete
+manual_stock/position_snapshot/v1/edit
+manual_stock/position_snapshot/v1/edit_before
+manual_stock/suspension/v1/query
+manual_stock/suspension/v1/query_code
+```
+
+**manual/**
+```
+manual/add_history
+manual/add_historylist
+manual/deleteHistory
+manual/deleteTransferHistory
+manual/edit_history
+manual/fast_position
+manual/fundTransfer
+manual/get_fundfee
+manual/getnewfundnavh5
+manual/select_history_detail
+manual/selectTransferHistory
+```
+
+**manualFund**
+```
+manualFund/addPositionList
+manualFund/addpositionRetype
+manualFund/bonusEdit
+manualFund/bonusPosTypeRetype
+manualFund/delPosition
+manualFund/editPosition
+manualFund/latestNav
+manualFund/positionDetail
+```
+
+**manualstock**
+```
+manualstock
+manualstock/addAccount
+manualstock/addBankHistory
+manualstock/addMoneyHistory
+manualstock/addPositionHistory
+manualstock/calcByCalcModule
+manualstock/deleteBankHistory
+manualstock/deleteMoneyHistory
+manualstock/deleteStockPosition
+manualstock/getDateAndNum
+manualstock/getTodayTradeHistory
+manualstock/modifyRemain
+manualstock/positions
+manualstock/queryBankHistory
+manualstock/queryMoneyHistory
+manualstock/updateBankHistory
+manualstock/updateMoneyHistory
+manualstock/v1/historyDateSpan
+manualstock/v2/queryMoneyHistory
+```
+
+**merge_config**
+```
+merge_config/v1/query_status
+```
+
+**optional_stock**
+```
+optional_stock/v2/group_position
+optional_stock/v2/history_curve
+optional_stock/v2/time_of_day
+```
+
+**optional**
+```
+optional/v3/get_fund_list
+optional/v3/get_stock_list
+```
+
+**optionalFund**
+```
+optionalFund/createGroup
+optionalFund/deleteFund
+optionalFund/editFund
+optionalFund/fundInGroup
+optionalFund/getAllInfo
+optionalFund/importFund
+```
+
+**optionalStock**
+```
+optionalStock/createGroup
+optionalStock/deleteStock
+optionalStock/editStock
+optionalStock/getAllInfo
+optionalStock/ocrOptionalStock
+optionalStock/stockInGroup
+```
+
+**pc**
+```
+pc/account/v1/account_list
+pc/account/v1/add_account
+pc/account/v1/del_account
+pc/account/v1/delete_money_history
+pc/account/v1/edit_account
+pc/account/v1/edit_money_history
 pc/account/v1/edit_stock_position_history
-pc/asset/v1/fund_quota                      pc/asset/v1/merge_compare
-pc/asset/v1/query_bank_history              pc/asset/v1/add_bank_history
-pc/asset/v1/add_stock_position              pc/asset/v1/clear_stock
-pc/asset/v1/delete_stock                    pc/asset/v1/time_share
-pc/stock/v1/query_suspension_code           stock_common/v1/hk_rate
-stock_common/v1/last_trading_day
+pc/account/v1/fund_card
+pc/account/v1/get_money_history
+pc/account/v1/init
+pc/account/v1/init_fund
+pc/account/v1/merge_day_trading
+pc/account/v1/qs_list
+pc/account/v1/status
+pc/account/v1/status_fund
+pc/account/v1/stock_card
+pc/asset/v1/add_bank_history
+pc/asset/v1/add_money_history
+pc/asset/v1/add_stock_position
+pc/asset/v1/asset_trend
+pc/asset/v1/clear_stock
+pc/asset/v1/delete_stock
+pc/asset/v1/fund_position
+pc/asset/v1/fund_quota
+pc/asset/v1/merge_compare
+pc/asset/v1/query_bank_history
+pc/asset/v1/stock_position
+pc/asset/v1/time_share
+pc/stock/v1/query_suspension_code
 ```
 
-> 已接入：`account_list` / `stock_position` / `fund_position` / `stock_card` / `fund_card` / `get_money_history` / `asset_trend`。
+**report**
+```
+report/stock/distribution
+```
+
+**stock_common**
+```
+stock_common/v1/hk_rate
+stock_common/v1/hk_rate_list
+stock_common/v1/last_trading_day
+stock_common/v1/market_query
+stock_common/v1/market_query_by_share
+```
+
+**stock_group**
+```
+stock_group/v1/check_delete_stock_group
+stock_group/v1/subscribe
+stock_group/v1/subscribe_info
+```
+
+**stock_position**
+```
+stock_position/v1/clear_position_query
+stock_position/v1/merge_position_query
+stock_position/v1/stock_history_query
+stock_position/v1/total_position_query
+```
+
+**stock_radar**
+```
+stock_radar/user/v1/bs_share
+stock_radar/user/v1/collect_leader
+stock_radar/user/v1/collect_leader_share
+stock_radar/user/v1/daily_history
+stock_radar/user/v1/daily_history_share
+stock_radar/user/v1/exist_history
+stock_radar/user/v1/history
+stock_radar/user/v1/history_share
+stock_radar/user/v1/range_detail
+stock_radar/user/v1/share_conf
+```
+
+**stock**
+```
+stock/accountProfitloss
+stock/accountProfitlossMerge
+stock/asset
+stock/bs
+stock/dailyStockProfitLoss
+stock/getAccounts
+stock/index
+stock/info/v1/detail
+stock/market/v1/rate
+stock/market/v1/ths_market
+stock/monthlyProfitLoss
+stock/monthlyProfitLossMerge
+stock/monthlyStockProfitLoss
+stock/profitlossByCode
+stock/profitlossByCodeMerge
+stock/v1/distribution_merge
+stock/v1/yearly_profit_loss
+stock/v1/yearly_stock_profit_loss
+```
+
+**stockAnalysisSummary**
+```
+stockAnalysisSummary/accountPositionRate
+stockAnalysisSummary/analysis
+stockAnalysisSummary/dayAnalysis
+stockAnalysisSummary/position_distribution
+stockAnalysisSummary/statistics
+stockAnalysisSummary/summaryInfo
+stockAnalysisSummary/v1/duration_rate
+stockAnalysisSummary/v1/select_analysis
+```
+
+**stockSummary**
+```
+stockSummary/judgeHkStock
+```
+
+**valuation**
+```
+valuation/fundMarket
+```
+
+---
+
+### 3.10 怎么从插件扒接口参数（操作手册）
+
+下次要接入某个未验证接口时，按这套流程从插件 JS 里扒它的请求参数。**只能扒出字段名和大致构造逻辑，业务含义/取值靠字段名+上下文推断，最终仍需真实抓包验证。**
+
+#### 前置：插件在哪
+
+- 解包后的插件目录：`~/Downloads/tzzb-plugin`
+- 业务代码在 **`tzzbWeb/*/`** 下的 `*.bundle.js`（不是 `js/pcIndex/`，那是 PC 壳）。已知几个大 bundle：
+  - `tzzbWeb/stockzcfx/index.*.bundle.js` — 股票资产分析（盈亏、分析汇总、持仓）
+  - `tzzbWeb/hzrl/calendarPage_sum.*.bundle.js` — 汇总日历（combineCalendar / fundCalendar / stock 盈亏）
+  - `tzzbWeb/common/*.bundle.js` — 公共
+- 关键：**这些 bundle 是已格式化的（多行、缩进），不是单行压缩**，所以能顺着读。
+
+#### 第 1 步：定位路径常量 → 短变量名
+
+bundle 里 API 路径被集中赋给单字母变量，形如：
+
+```js
+d = '/caishen_fund/stock/accountProfitloss',
+p = '/caishen_fund/stock/monthlyProfitLoss',
+```
+
+先 grep 出接口名，拿到它绑定的变量名（这里 `accountProfitloss` → `d`）：
+
+```bash
+cd ~/Downloads/tzzb-plugin
+grep -rn "accountProfitloss" tzzbWeb --include="*.js" | grep "caishen_fund"
+```
+
+> 注意：同一接口可能在多个 bundle 里各自绑不同变量名，按文件分别看。
+
+#### 第 2 步：找请求封装 → 定位 `param`
+
+插件统一用一个包装器发请求，签名是：
+
+```js
+(0, o.e4)({ hostCode: '2000', url: <路径变量>, param: <参数对象> })
+```
+
+（`e4` 常被 import 成 `o.e4` / `r.e4`。）grep 这个变量作为 `url:` 出现的调用点：
+
+```bash
+# 假设第 1 步拿到的变量是 d，且知道它在 calendarPage_sum 里
+grep -n "url: d\b\|url:d\b" tzzbWeb/hzrl/calendarPage_sum.*.bundle.js
+# 或直接搜包装器，再在附近对照 url 变量
+grep -n "e4)(" tzzbWeb/hzrl/calendarPage_sum.*.bundle.js
+```
+
+`param:` 后面那个变量（常见 `l` / `g`）就是要扒的参数对象。
+
+#### 第 3 步：往上读 `param` 的构造
+
+在调用点上方读参数对象怎么拼出来的。实测能看到明文字段名，例如：
+
+```js
+l = { from_pc: '1' };
+// switch 分支按类型补字段：
+l.startdate = n.yk_startDate; l.enddate = n.yk_endDate;   // 区间
+l.year = n.yk_year;                                        // 年度
+// 手动账户分支：
+l.manual_id = t.manual_id; l.flag = '3'; l.cus_stockType = 'manual';
+```
+
+日历类还常见 `{ startdate, enddate, date, retype, sz_cal, cw_cal, jy_cal }` 等。
+
+#### 第 4 步：展开辅助函数
+
+参数常由 `c(c({...}, y), a)` 这种合并出来（`c` 是对象 merge），其中 `y = h(n)`、账户前缀 `m(n)` 之类的辅助函数补充公共字段（如 `manual_id` / `cus_stockType` / 账户 id）。把 `h`、`m` 的定义也 grep 出来读一遍，才能拿到完整字段集：
+
+```bash
+grep -n "function h(\|h = function\|function m(" tzzbWeb/hzrl/calendarPage_sum.*.bundle.js
+```
+
+#### 第 5 步：合并公共参数
+
+上面扒到的是**业务字段**。真实请求还要叠加 §1.4 的公共参数（`uid` / `source` / 空字段占位等）和 §1.2 的 4 个必要请求头，才能过 403。接入时以 `pkg/api/client.go` 的 `post()` 为准。
+
+#### 第 6 步：验证（不可跳过）
+
+JS 只能给字段名和拼装逻辑，**取值语义（枚举值含义、日期格式、必填性）必须真实抓一次**：浏览器登录 → F12 Network → 触发该功能 → 看 Payload 和 Response，和扒出来的字段对齐后再写进本文档的"已验证接口"。
+
+#### 一句话流程
+
+```
+grep 接口名 → 拿路径变量 → grep url:变量 找 e4 调用点 →
+上翻读 param 构造 → 展开 h()/m() 辅助函数 → 叠加 §1.4 公共参数/§1.2 头 → 真实抓包验证
+```
 
 ---
 

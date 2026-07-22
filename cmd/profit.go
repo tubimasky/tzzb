@@ -22,8 +22,10 @@ var profitSummaryCmd = &cobra.Command{
 	Use:   "summary",
 	Short: "收益汇总",
 	Run: func(cmd *cobra.Command, args []string) {
+		svc := getAccountService()
+
 		// 获取账户列表
-		accounts, err := accountService.GetAccountList()
+		accounts, err := svc.GetAccountList()
 		if err != nil {
 			cli.HandleError(err, "获取收益数据失败")
 		}
@@ -38,10 +40,10 @@ var profitSummaryCmd = &cobra.Command{
 		}
 
 		// 按总盈亏从高到低排序
-		accountService.SortByTotalProfit(accounts)
+		svc.SortByTotalProfit(accounts)
 
 		// 计算汇总
-		summary := accountService.CalculateSummary(accounts)
+		summary := svc.CalculateSummary(accounts)
 
 		// JSON 输出
 		if outputJSON {
@@ -66,7 +68,7 @@ var profitSummaryCmd = &cobra.Command{
 					HoldProfit:  acc.HoldProfit.F(),
 					TodayProfit: acc.TodayProfit.F(),
 					TotalProfit: acc.TotalProfit.F(),
-					TotalRate:   accountService.CalculateAccountRate(acc),
+					TotalRate:   svc.CalculateAccountRate(acc),
 				})
 			}
 
@@ -97,7 +99,7 @@ var profitSummaryCmd = &cobra.Command{
 				formatter.ColorNum(acc.HoldProfit.F()),
 				formatter.ColorNum(acc.TodayProfit.F()),
 				formatter.ColorNum(acc.TotalProfit.F()),
-				formatter.ColorPct(accountService.CalculateAccountRate(acc)),
+				formatter.ColorPct(svc.CalculateAccountRate(acc)),
 			})
 		}
 

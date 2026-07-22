@@ -12,7 +12,10 @@ import (
 	"github.com/liyanran/tzzb-cli/pkg/api"
 )
 
-var accountService *service.AccountService
+func getAccountService() *service.AccountService {
+	// 必须在 Run 时创建：init 阶段 apiClient 可能尚未赋值（同包 init 按文件名顺序）。
+	return service.NewAccountService(apiClient)
+}
 
 var accountCmd = &cobra.Command{
 	Use:   "account",
@@ -24,8 +27,10 @@ var accountListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "查看账户列表",
 	Run: func(cmd *cobra.Command, args []string) {
+		svc := getAccountService()
+
 		// 获取账户列表
-		accounts, err := accountService.GetAccountList()
+		accounts, err := svc.GetAccountList()
 		if err != nil {
 			cli.HandleError(err, "获取账户列表失败")
 		}
@@ -40,7 +45,7 @@ var accountListCmd = &cobra.Command{
 		}
 
 		// 计算汇总
-		summary := accountService.CalculateSummary(accounts)
+		summary := svc.CalculateSummary(accounts)
 
 		// JSON 输出
 		if outputJSON {
@@ -105,6 +110,5 @@ var accountListCmd = &cobra.Command{
 }
 
 func init() {
-	accountService = service.NewAccountService(apiClient)
 	accountCmd.AddCommand(accountListCmd)
 }

@@ -31,6 +31,11 @@ func (s *AccountService) GetAccountList() ([]api.Account, error) {
 	return s.client.GetAccountList()
 }
 
+// GetAccountListWithWarnings 返回可展示的部分账户快照及其加载警告。
+func (s *AccountService) GetAccountListWithWarnings() ([]api.Account, []api.AccountLoadWarning, error) {
+	return s.client.GetAccountListWithWarnings()
+}
+
 // CalculateSummary 计算账户汇总统计
 func (s *AccountService) CalculateSummary(accounts []api.Account) AccountSummary {
 	var summary AccountSummary

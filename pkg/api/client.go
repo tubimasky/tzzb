@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -19,18 +20,18 @@ const (
 	Referer = "https://tzzb.10jqka.com.cn/pc/"
 	UA      = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
-	epAccountList      = "/caishen_fund/pc/account/v1/account_list"
-	epMoneyHistory     = "/caishen_fund/pc/account/v1/get_money_history"
-	epStockPosition    = "/caishen_fund/pc/asset/v1/stock_position"
-	epFundPosition     = "/caishen_fund/pc/asset/v1/fund_position"
-	epStockCard        = "/caishen_fund/pc/account/v1/stock_card"
-	epFundCard         = "/caishen_fund/pc/account/v1/fund_card"
-	epGetQuotes        = "/caishen_fund/invest/getQuotes"              // 插件 requestPriceInfo 同源
-	epMergeDayTrading  = "/caishen_fund/pc/account/v1/merge_day_trading" // 当日成交，算今日盈亏用
-	epAssetTrend       = "/caishen_fund/pc/asset/v1/asset_trend"       // 资产趋势曲线
-	epBankHistory      = "/caishen_fund/pc/asset/v1/query_bank_history" // 银证转账历史
+	epAccountList     = "/caishen_fund/pc/account/v1/account_list"
+	epMoneyHistory    = "/caishen_fund/pc/account/v1/get_money_history"
+	epStockPosition   = "/caishen_fund/pc/asset/v1/stock_position"
+	epFundPosition    = "/caishen_fund/pc/asset/v1/fund_position"
+	epStockCard       = "/caishen_fund/pc/account/v1/stock_card"
+	epFundCard        = "/caishen_fund/pc/account/v1/fund_card"
+	epGetQuotes       = "/caishen_fund/invest/getQuotes"                // 插件 requestPriceInfo 同源
+	epMergeDayTrading = "/caishen_fund/pc/account/v1/merge_day_trading" // 当日成交，算今日盈亏用
+	epAssetTrend      = "/caishen_fund/pc/asset/v1/asset_trend"         // 资产趋势曲线
+	epBankHistory     = "/caishen_fund/pc/asset/v1/query_bank_history"  // 银证转账历史
 
-	epStockGetAccounts = "/caishen_fund/stock/getAccounts"              // 股票账户列表（含 zjzh 资金账号）
+	epStockGetAccounts = "/caishen_fund/stock/getAccounts"                 // 股票账户列表（含 zjzh 资金账号）
 	epCalDaily         = "/caishen_fund/combineCalendar/dailyProfitloss"   // 盈亏日历：某月各日
 	epCalMonthly       = "/caishen_fund/combineCalendar/monthlyProfitloss" // 盈亏日历：某年各月
 
@@ -40,8 +41,8 @@ const (
 	epStockCodePL    = "/caishen_fund/stock/profitlossByCodeMerge"  // 某区间每日盈亏 + 区间内个股盈亏
 
 	// 股票仓位分析（梯队 B）。fundkey 用 stock 账户 fund_key（非基金 fundid）。
-	epAnalysisPosDist  = "/caishen_fund/stockAnalysisSummary/position_distribution" // 持仓分布（按市值）
-	epAnalysisPosRate  = "/caishen_fund/stockAnalysisSummary/accountPositionRate"   // 账户仓位率
+	epAnalysisPosDist = "/caishen_fund/stockAnalysisSummary/position_distribution" // 持仓分布（按市值）
+	epAnalysisPosRate = "/caishen_fund/stockAnalysisSummary/accountPositionRate"   // 账户仓位率
 
 	// 单只股票钻取明细（handstock/itemDetail 系）。坐标：fundkey/rzrq_fundkey/manualid + stock_code。
 	epMergePosQuery     = "/caishen_fund/stock_position/v1/merge_position_query" // 合并持仓明细
@@ -95,12 +96,28 @@ type Client struct {
 	httpClient *http.Client
 	cookies    string
 	uid        string
+	ctx        context.Context
+}
+
+// WithContext 返回绑定请求上下文的浅拷贝，可安全用于并发 HTTP handler。
+func (c *Client) WithContext(ctx context.Context) *Client {
+	clone := *c
+	clone.ctx = ctx
+	return &clone
 }
 
 func NewClient() *Client {
 	cookies := loadCookies()
+	return NewClientWithHTTPClient(&http.Client{Timeout: 30 * time.Second}, cookies)
+}
+
+// NewClientWithHTTPClient 创建可注入 HTTP transport 的客户端，便于本地代理和测试。
+func NewClientWithHTTPClient(httpClient *http.Client, cookies string) *Client {
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: 30 * time.Second}
+	}
 	return &Client{
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		httpClient: httpClient,
 		cookies:    cookies,
 		uid:        uidFromCookie(cookies),
 	}
@@ -178,7 +195,11 @@ func (c *Client) post(path string, params map[string]string) ([]byte, error) {
 		form.Set(k, v)
 	}
 
-	req, err := http.NewRequest("POST", BaseURL+path, strings.NewReader(form.Encode()))
+	ctx := c.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST", BaseURL+path, strings.NewReader(form.Encode()))
 	if err != nil {
 		return nil, err
 	}

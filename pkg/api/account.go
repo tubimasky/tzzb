@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // Account 覆盖手动/基金/两融/普通四类账户的字段。
@@ -83,10 +84,28 @@ type accountExData struct {
 	Manual []Account `json:"manual"`
 }
 
-// GetAccountList 拉取全部账户，并为每个账户富化真实资产与持仓。
-// account_list 只返回账户元数据（名字/ID）；持仓明细走 position 接口，
-// 账户级资产/盈亏走 card 接口（与网页账户卡同源，口径正确）。
-func (c *Client) GetAccountList() ([]Account, error) {
+// AccountLoadWarning 描述账户快照中未能加载的组成部分。
+type AccountLoadWarning struct {
+	Account   string `json:"account"`
+	Component string `json:"component"`
+	Message   string `json:"message"`
+}
+
+// AccountLoadError 表示账户元数据已取得，但一个或多个快照子请求失败。
+type AccountLoadError struct {
+	Warnings []AccountLoadWarning
+}
+
+func (e *AccountLoadError) Error() string {
+	parts := make([]string, 0, len(e.Warnings))
+	for _, warning := range e.Warnings {
+		parts = append(parts, fmt.Sprintf("%s %s: %s", warning.Account, warning.Component, warning.Message))
+	}
+	return "账户数据不完整: " + strings.Join(parts, "; ")
+}
+
+// GetAccountMetadata 只拉取账户标识和名称，不请求持仓或账户卡。
+func (c *Client) GetAccountMetadata() ([]Account, error) {
 	ex, err := c.call(epAccountList, map[string]string{"userid": c.uid})
 	if err != nil {
 		return nil, err
@@ -107,19 +126,51 @@ func (c *Client) GetAccountList() ([]Account, error) {
 	tag(d.Fund, "fund")
 	tag(d.Rzrq, "rzrq")
 	tag(d.Common, "common")
+	return out, nil
+}
+
+// GetAccountListWithWarnings 拉取全部账户并富化快照，同时保留部分失败信息。
+// account_list 只返回账户元数据（名字/ID）；持仓明细走 position 接口，
+// 账户级资产/盈亏走 card 接口（与网页账户卡同源，口径正确）。
+func (c *Client) GetAccountListWithWarnings() ([]Account, []AccountLoadWarning, error) {
+	out, err := c.GetAccountMetadata()
+	if err != nil {
+		return nil, nil, err
+	}
 
 	// 逐个富化：持仓明细 + 账户卡（card 覆盖资产/当日盈亏/持仓盈亏）。
+	var warnings []AccountLoadWarning
 	for i := range out {
 		detail, err := c.fetchAccountDetail(out[i])
 		if err == nil {
 			out[i].mergeDetail(detail)
+		} else {
+			warnings = append(warnings, AccountLoadWarning{
+				Account: out[i].Name(), Component: "持仓详情", Message: err.Error(),
+			})
 		}
 		// card 失败时保留 position 汇总的持仓盈亏/市值；当日盈亏 position 侧不可靠，不强行用 w_profit。
 		if card, err := c.fetchAccountCard(out[i]); err == nil {
 			out[i].mergeCard(card)
+		} else {
+			warnings = append(warnings, AccountLoadWarning{
+				Account: out[i].Name(), Component: "账户卡", Message: err.Error(),
+			})
 		}
 	}
-	return out, nil
+	return out, warnings, nil
+}
+
+// GetAccountList 返回完整账户快照。任何富化失败都会报错，避免调用方把部分数据当成全量数据。
+func (c *Client) GetAccountList() ([]Account, error) {
+	accounts, warnings, err := c.GetAccountListWithWarnings()
+	if err != nil {
+		return nil, err
+	}
+	if len(warnings) > 0 {
+		return nil, &AccountLoadError{Warnings: warnings}
+	}
+	return accounts, nil
 }
 
 // positionResp 是持仓接口的响应。不同账户类型顶层字段不一：

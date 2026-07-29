@@ -23,7 +23,7 @@ func NewBankService(client *api.Client) *BankService {
 
 // ExecuteListCommand 执行查询银证转账列表命令
 func (s *BankService) ExecuteListCommand(accountFilter string, days int, jsonOutput bool) {
-	accounts, err := s.client.GetAccountList()
+	accounts, err := s.client.GetAccountMetadata()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "获取账户失败: %v\n", err)
 		os.Exit(1)
@@ -136,12 +136,12 @@ func (s *BankService) outputJSON(transfers []api.BankTransfer, days int) {
 	}
 
 	data := map[string]any{
-		"days":       days,
-		"count":      len(transfers),
-		"total_in":   totalIn,
-		"total_out":  totalOut,
-		"net_in":     totalIn - totalOut,
-		"transfers":  items,
+		"days":      days,
+		"count":     len(transfers),
+		"total_in":  totalIn,
+		"total_out": totalOut,
+		"net_in":    totalIn - totalOut,
+		"transfers": items,
 	}
 
 	formatter.PrintJSON(data)

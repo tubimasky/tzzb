@@ -12,7 +12,7 @@ import (
 // 「全账户合算」口径参数，故集中在这里构造。
 // accountFilter 非空时只纳入名称匹配的账户（单账户口径）。
 func buildCalendarParams(client *api.Client, accountFilter string) (api.CalendarParams, error) {
-	accounts, err := client.GetAccountList()
+	accounts, err := client.GetAccountMetadata()
 	if err != nil {
 		return api.CalendarParams{}, fmt.Errorf("获取账户失败: %v", err)
 	}

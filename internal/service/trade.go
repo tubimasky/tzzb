@@ -80,7 +80,7 @@ type AccountPack struct {
 
 // MatchTradeAccounts 根据账户名过滤匹配账户
 func (s *TradeService) MatchTradeAccounts(accountFilter string) ([]api.Account, error) {
-	accounts, err := s.client.GetAccountList()
+	accounts, err := s.client.GetAccountMetadata()
 	if err != nil {
 		return nil, fmt.Errorf("获取账户失败: %w", err)
 	}
@@ -172,7 +172,6 @@ func (s *TradeService) FlattenRecords(packs []AccountPack) []map[string]any {
 	return all
 }
 
-
 // TradeCommandService 交易命令服务（封装重复的加载+渲染流程）
 type TradeCommandService struct {
 	tradeService  *TradeService
@@ -255,7 +254,6 @@ func (s *TradeCommandService) ExecuteSummaryCommand(accountFilter string, output
 	fmt.Println()
 	s.renderService.RenderGrandSummary(all)
 }
-
 
 // TradeJSONService 交易 JSON 输出服务
 type TradeJSONService struct {
@@ -354,7 +352,6 @@ func (s *TradeJSONService) BuildSummaryJSON(packs []AccountPack, all []map[strin
 func (s *TradeJSONService) PrintJSON(data any) {
 	formatter.PrintJSON(data)
 }
-
 
 // TradeRenderService 交易渲染服务
 type TradeRenderService struct {
@@ -585,4 +582,3 @@ func (s *TradeRenderService) RenderGrandSummary(all []map[string]any) {
 	)
 	fmt.Println("说明: 净买入 = 买入金额 − 卖出金额；正数=净加仓/净投入，负数=净减仓。含逆回购滚动。")
 }
-

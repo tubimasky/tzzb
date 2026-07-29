@@ -41,7 +41,14 @@ func (s *CalendarService) LoadYear(accountFilter, year string) (*api.CalendarRes
 		return nil, year, err
 	}
 	res, err := s.client.GetCalendarMonthly(params, year)
-	return res, year, err
+	if err != nil {
+		return nil, year, err
+	}
+	// 接口返回的月份是乱序的（如 202606,202607,202604...），按日期升序排好再给上层。
+	sort.Slice(res.Points, func(i, j int) bool {
+		return res.Points[i].Date < res.Points[j].Date
+	})
+	return res, year, nil
 }
 
 // DayCell 是月历中的一天。

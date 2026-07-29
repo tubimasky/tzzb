@@ -1,0 +1,176 @@
+.calendar-page {
+  width: 100%;
+}
+
+/* 区间汇总条 */
+.cal-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem 2.5rem;
+  align-items: baseline;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1.5rem;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-xs);
+}
+
+.cal-summary-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.cal-summary-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.cal-summary-value {
+  font-family: var(--font-mono);
+  font-size: 1.5rem;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.cal-summary-value.sm {
+  font-size: 1.05rem;
+}
+
+/* 月历网格 */
+.cal-grid-wrap {
+  padding: 1rem 1.15rem 1.25rem;
+  margin-bottom: 1.5rem;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-xs);
+}
+
+.cal-grid-head,
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 0.4rem;
+}
+
+.cal-grid-head {
+  margin-bottom: 0.5rem;
+}
+
+.cal-weekday {
+  text-align: center;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  color: var(--text-tertiary);
+}
+
+.cal-cell {
+  min-height: 62px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-muted);
+  padding: 0.4rem 0.5rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  transition: transform 0.12s ease;
+}
+
+.cal-cell:not(.pad):hover {
+  transform: translateY(-1px);
+  border-color: var(--border-strong);
+}
+
+.cal-cell.pad {
+  background: transparent;
+  border-color: transparent;
+}
+
+.cal-day {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.cal-pl {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* 无交易数据的自然日 */
+.cal-cell.nodata {
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--bg-muted),
+    var(--bg-muted) 6px,
+    #fff 6px,
+    #fff 12px
+  );
+}
+
+.cal-cell.nodata .cal-pl {
+  color: var(--text-tertiary);
+}
+
+/* 盈亏热力：红涨绿跌，3 档深浅 */
+.cal-cell.lv0 {
+  background: var(--bg-muted);
+}
+
+.cal-cell.up1 {
+  background: rgba(225, 29, 72, 0.07);
+  border-color: rgba(225, 29, 72, 0.18);
+}
+
+.cal-cell.up2 {
+  background: rgba(225, 29, 72, 0.15);
+  border-color: rgba(225, 29, 72, 0.3);
+}
+
+.cal-cell.up3 {
+  background: rgba(225, 29, 72, 0.26);
+  border-color: rgba(225, 29, 72, 0.45);
+}
+
+.cal-cell.down1 {
+  background: rgba(5, 150, 105, 0.07);
+  border-color: rgba(5, 150, 105, 0.18);
+}
+
+.cal-cell.down2 {
+  background: rgba(5, 150, 105, 0.15);
+  border-color: rgba(5, 150, 105, 0.3);
+}
+
+.cal-cell.down3 {
+  background: rgba(5, 150, 105, 0.26);
+  border-color: rgba(5, 150, 105, 0.45);
+}
+
+@media (max-width: 640px) {
+  .cal-cell {
+    min-height: 52px;
+    padding: 0.3rem 0.35rem;
+  }
+
+  .cal-pl {
+    font-size: 0.68rem;
+  }
+
+  .cal-summary-value {
+    font-size: 1.25rem;
+  }
+}

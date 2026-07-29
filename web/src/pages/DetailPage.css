@@ -1,0 +1,257 @@
+.detail-page {
+  width: 100%;
+}
+
+.back-bar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.back-link {
+  appearance: none;
+  border: none;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--brand-accent);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.back-link:hover {
+  text-decoration: underline;
+}
+
+.back-link.secondary {
+  color: var(--text-tertiary);
+  font-weight: 500;
+}
+
+.detail-header .page-subtitle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.detail-code {
+  font-family: var(--font-mono);
+  font-style: normal !important;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.chip.warn {
+  background: #fff7ed;
+  color: #c2410c;
+  border: 1px solid #fed7aa;
+}
+
+.single-account-chip {
+  margin-bottom: 1rem;
+}
+
+/* 多账户切换 */
+.account-switch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 1rem;
+  padding: 0.3rem;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-xs);
+}
+
+.account-switch button {
+  appearance: none;
+  border: none;
+  background: transparent;
+  padding: 0.5rem 0.9rem;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    color 0.15s,
+    box-shadow 0.15s;
+}
+
+.account-switch button:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.account-switch button.active {
+  background: var(--brand-soft);
+  color: var(--brand);
+  box-shadow: var(--shadow-xs);
+  font-weight: 600;
+}
+
+.detail-tabs {
+  margin-bottom: 1.25rem;
+  width: fit-content;
+  max-width: 100%;
+  flex-wrap: wrap;
+}
+
+.tab-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.15rem;
+  height: 1.15rem;
+  margin-left: 0.3rem;
+  padding: 0 0.3rem;
+  border-radius: var(--r-full);
+  background: var(--brand-soft);
+  color: var(--brand-accent);
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
+.detail-tabs button.active .tab-count {
+  background: var(--brand-accent);
+  color: #fff;
+}
+
+.detail-panel {
+  animation: fade-up 0.25s ease both;
+}
+
+/* 面板内图表与下方表格留出间距 */
+.detail-chart {
+  margin-bottom: 1rem;
+}
+
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 0.75rem;
+}
+
+.metric-card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 0.9rem 1rem;
+  box-shadow: var(--shadow-xs);
+}
+
+.metric-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  margin-bottom: 0.4rem;
+}
+
+.metric-value {
+  font-family: var(--font-mono);
+  font-size: 1.15rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.25;
+}
+
+.metric-value-sm {
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.inline-warn {
+  margin-top: 1rem;
+  padding: 0.75rem 1rem;
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  border-radius: var(--r-md);
+  color: #c2410c;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.op-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.15rem 0.5rem;
+  border-radius: var(--r-full);
+  font-size: 0.75rem;
+  font-weight: 650;
+}
+
+.op-pill.op-buy {
+  background: var(--up-soft);
+  color: var(--up);
+}
+
+.op-pill.op-sell {
+  background: var(--down-soft);
+  color: var(--down);
+}
+
+.op-pill.op-other {
+  background: var(--bg-muted);
+  color: var(--text-secondary);
+}
+
+.trade-date {
+  display: block;
+  font-weight: 500;
+}
+
+.trade-time {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+}
+
+/* 可点击持仓行 */
+.data-table tbody tr.row-clickable {
+  cursor: pointer;
+}
+
+.data-table tbody tr.row-clickable:hover {
+  background: var(--brand-soft);
+}
+
+.data-table tbody tr.row-clickable:focus-visible {
+  outline: 2px solid var(--brand-accent);
+  outline-offset: -2px;
+}
+
+.code-link {
+  color: var(--brand-accent);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.code-link:hover {
+  text-decoration: underline;
+}
+
+@media (max-width: 640px) {
+  .metric-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .detail-tabs {
+    width: 100%;
+  }
+
+  .detail-tabs button {
+    flex: 1;
+    justify-content: center;
+  }
+}

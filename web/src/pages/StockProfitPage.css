@@ -1,0 +1,13 @@
+.stockprofit-page {
+  width: 100%;
+}
+
+.stockprofit-page .summary-card {
+  margin-top: 0;
+  margin-bottom: 1.5rem;
+}
+
+.stockprofit-page .filters input[type='date'] {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+}

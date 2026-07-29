@@ -1,0 +1,165 @@
+.positions-page {
+  width: 100%;
+}
+
+.positions-filters {
+  align-items: flex-end;
+  gap: 1rem 1.25rem;
+}
+
+.filter-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.filter-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  flex: 1;
+  min-width: 140px;
+}
+
+.filter-field-sm {
+  flex: 0 1 220px;
+  min-width: 180px;
+}
+
+.sort-row {
+  display: flex;
+  gap: 0.4rem;
+  align-items: stretch;
+}
+
+.sort-row select {
+  flex: 1;
+  min-width: 0;
+}
+
+.sort-dir-btn {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--bg-muted);
+  border-radius: var(--r-sm);
+  padding: 0.55rem 0.7rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background 0.15s,
+    border-color 0.15s,
+    color 0.15s;
+}
+
+.sort-dir-btn:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+  background: #fff;
+}
+
+/* 可点击表头排序 */
+.th-sort {
+  appearance: none;
+  border: none;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  white-space: nowrap;
+}
+
+.th-sort:hover,
+.th-sort.active {
+  color: var(--brand-accent);
+}
+
+.th-arrow {
+  font-size: 0.7em;
+  opacity: 0.55;
+  font-weight: 500;
+}
+
+.th-sort.active .th-arrow {
+  opacity: 1;
+}
+
+.acc-cell {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  font-weight: 500;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.accounts-cell {
+  max-width: 220px;
+}
+
+.account-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.chip.tiny {
+  font-size: 0.65rem;
+  padding: 0.1rem 0.4rem;
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.data-table th.num .th-sort {
+  width: 100%;
+  justify-content: flex-end;
+}
+
+/* 行点击下钻（样式补强，主样式在 App/Detail 共享类） */
+.data-table tbody tr.row-clickable {
+  cursor: pointer;
+}
+
+.data-table tbody tr.row-clickable:hover {
+  background: var(--brand-soft);
+}
+
+.data-table tbody tr.row-clickable:focus-visible {
+  outline: 2px solid var(--brand-accent);
+  outline-offset: -2px;
+}
+
+.code-link {
+  color: var(--brand-accent);
+  font-weight: 600;
+}
+
+@media (max-width: 900px) {
+  .positions-filters {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .filter-field,
+  .filter-field-sm {
+    min-width: 0;
+  }
+
+  .segmented {
+    flex-wrap: wrap;
+  }
+}

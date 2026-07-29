@@ -1,0 +1,313 @@
+.accounts-page {
+  width: 100%;
+}
+
+/* Metric cards */
+.summary-cards {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1rem;
+  margin-bottom: 1.75rem;
+}
+
+.card {
+  position: relative;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: 1.15rem 1.25rem 1.25rem;
+  box-shadow: var(--shadow-xs);
+  overflow: hidden;
+  transition:
+    transform 0.2s ease,
+    box-shadow 0.2s ease,
+    border-color 0.2s ease;
+}
+
+.card::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--brand-accent);
+  opacity: 0.85;
+}
+
+.card.tone-up::before {
+  background: var(--up);
+}
+
+.card.tone-down::before {
+  background: var(--down);
+}
+
+.card.tone-neutral::before {
+  background: var(--brand);
+}
+
+.card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+  border-color: var(--border-strong);
+}
+
+.card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.85rem;
+}
+
+.card-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.card-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  background: var(--brand-soft);
+  color: var(--brand-accent);
+  flex-shrink: 0;
+}
+
+.card.tone-up .card-icon {
+  background: var(--up-soft);
+  color: var(--up);
+}
+
+.card.tone-down .card-icon {
+  background: var(--down-soft);
+  color: var(--down);
+}
+
+.card-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.card-value {
+  font-family: var(--font-mono);
+  font-size: clamp(1.35rem, 2vw, 1.65rem);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+}
+
+.card-unit {
+  margin-left: 0.25rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  letter-spacing: 0;
+}
+
+.card-hint {
+  margin-top: 0.45rem;
+  font-size: 0.78rem;
+  color: var(--text-tertiary);
+}
+
+/* Table panel */
+.accounts-table-wrapper {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-xs);
+  overflow: hidden;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(180deg, #fff 0%, var(--bg-muted) 100%);
+}
+
+.panel-header h2 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+
+.panel-meta {
+  font-size: 0.8rem;
+  color: var(--text-tertiary);
+  font-weight: 500;
+}
+
+.accounts-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 720px;
+}
+
+.accounts-table th,
+.accounts-table td {
+  padding: 0.85rem 1.1rem;
+  text-align: left;
+}
+
+.accounts-table th.num,
+.accounts-table td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.accounts-table th {
+  background: var(--bg-muted);
+  font-weight: 600;
+  color: var(--text-tertiary);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.accounts-table tbody tr {
+  transition: background 0.12s ease;
+}
+
+.accounts-table tbody tr:hover {
+  background: var(--bg-hover);
+}
+
+.accounts-table td {
+  font-size: 0.9rem;
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+}
+
+.accounts-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.accounts-table td.num {
+  font-family: var(--font-mono);
+  font-size: 0.84rem;
+  font-weight: 500;
+}
+
+.acc-name {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.acc-cat {
+  display: inline-flex;
+  padding: 0.15rem 0.5rem;
+  border-radius: var(--r-full);
+  font-size: 0.72rem;
+  font-weight: 600;
+  background: var(--bg-muted);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+
+/* Position rate bar */
+.rate-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.35rem;
+  min-width: 88px;
+}
+
+.rate-bar {
+  width: 72px;
+  height: 4px;
+  border-radius: var(--r-full);
+  background: var(--bg-muted);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.rate-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--brand-accent), #60a5fa);
+  max-width: 100%;
+}
+
+@media (max-width: 960px) {
+  .summary-cards {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 560px) {
+  .summary-cards {
+    grid-template-columns: 1fr;
+  }
+
+  .accounts-table-wrapper {
+    overflow-x: auto;
+  }
+}
+
+/* ——— 趋势图控件 ——— */
+.trend-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* 区间统计条：起止资产 / 变化 / 最大回撤 */
+.trend-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.25rem;
+  margin-top: 0.85rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.trend-stats strong {
+  font-family: var(--font-mono);
+  font-weight: 550;
+  color: var(--text);
+}
+
+/* 图表内联错误（趋势接口失败时不影响页面其余部分） */
+.chart-inline-error {
+  padding: 0.6rem 0.8rem;
+  background: var(--up-soft);
+  border: 1px solid #fecdd3;
+  border-radius: var(--r-sm);
+  color: var(--up);
+  font-size: 0.82rem;
+  font-weight: 500;
+}
+
+.chart-inline-warning {
+  padding: 0.6rem 0.8rem;
+  margin-bottom: 0.5rem;
+  background: #fffbeb;
+  border: 1px solid #fcd34d;
+  border-radius: var(--r-sm);
+  color: #92400e;
+  font-size: 0.82rem;
+  font-weight: 500;
+}

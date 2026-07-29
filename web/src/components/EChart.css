@@ -1,0 +1,97 @@
+/* 画布常驻，loading/empty 用遮罩盖住（详见 EChart.tsx 的注释） */
+.chart-shell {
+  position: relative;
+  width: 100%;
+}
+
+.chart-canvas {
+  width: 100%;
+  height: 100%;
+}
+
+.chart-overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: var(--bg-elevated);
+}
+
+.chart-skeleton {
+  width: 100%;
+  height: 100%;
+  border-radius: var(--r-md);
+  background: linear-gradient(90deg, var(--bg-muted) 0%, #e8ecf1 45%, var(--bg-muted) 90%);
+  background-size: 200% 100%;
+  animation: shimmer 1.2s ease-in-out infinite;
+}
+
+.chart-empty {
+  color: var(--text-tertiary);
+  font-size: 0.875rem;
+}
+
+/* 图表卡片外壳（各页共用） */
+.chart-card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-xs);
+  padding: 1rem 1.15rem 1.15rem;
+  min-width: 0;
+}
+
+.chart-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.85rem;
+}
+
+.chart-card-title {
+  margin: 0;
+  font-size: 0.925rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+
+.chart-card-meta {
+  font-size: 0.78rem;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-card-meta.profit-positive {
+  color: var(--up);
+  font-weight: 600;
+}
+
+.chart-card-meta.profit-negative {
+  color: var(--down);
+  font-weight: 600;
+}
+
+/* 图表栅格：默认两列，窄屏单列 */
+.chart-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.chart-grid.single {
+  grid-template-columns: 1fr;
+}
+
+.chart-grid > .chart-card.span-2 {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 900px) {
+  .chart-grid {
+    grid-template-columns: 1fr;
+  }
+}

@@ -22,3 +22,6 @@ accounts_*.csv
 accounts_*.json
 positions_*.csv
 positions_*.json
+web/dist/
+internal/httpapi/dist/*
+!internal/httpapi/dist/.keep

@@ -11,16 +11,16 @@ PLATFORMS := \
 	windows/amd64
 
 .PHONY: all build install uninstall clean run fmt tidy vet test help \
-	account position profit trend build-all
+	account position profit trend build-all web web-embed serve
 
 all: build
 
-## build: 编译到当前目录 ./tzzb
-build:
+## build: 编译到当前目录 ./tzzb（自动构建并嵌入前端）
+build: web-embed
 	go build -trimpath -ldflags "$(LDFLAGS)" -o $(APP) .
 
 ## install: 安装到 ~/go/bin (或 $(GOPATH)/bin)
-install:
+install: web-embed
 	@mkdir -p ~/go/bin
 	go build -trimpath -ldflags "$(LDFLAGS)" -o ~/go/bin/$(APP) .
 	@echo "✓ 已安装到 ~/go/bin/$(APP)"
@@ -34,6 +34,7 @@ uninstall:
 clean:
 	rm -f $(APP) $(APP).exe
 	rm -rf dist/
+	rm -rf internal/httpapi/dist/*
 
 ## run: 编译后执行，额外参数用 ARGS=... 传递
 ## 例: make run ARGS="account list"
@@ -70,7 +71,7 @@ trend: build
 	./$(APP) trend show
 
 ## build-all: 交叉编译到 dist/
-build-all: clean
+build-all: clean web-embed
 	@mkdir -p dist
 	@for p in $(PLATFORMS); do \
 		os=$${p%/*}; arch=$${p#*/}; \
@@ -94,3 +95,24 @@ help:
 	@echo "  make run ARGS='position stock'"
 	@echo "  make account"
 	@echo "  make trend"
+	@echo "  make web        # 构建前端"
+	@echo "  make serve      # 启动 Web 服务"
+
+## web: 构建前端（打包到 web/dist）
+web:
+	@echo "→ 构建前端..."
+	cd web && npm ci && npm run build
+	@echo "✓ 前端已打包到 web/dist"
+
+## web-embed: 构建前端并复制到 internal/httpapi/dist 用于 go:embed
+web-embed:
+	@echo "→ 构建前端并准备嵌入..."
+	@cd web && npm ci && npm run build
+	@mkdir -p internal/httpapi/dist
+	@rm -rf internal/httpapi/dist/*
+	@cp -r web/dist/* internal/httpapi/dist/
+	@echo "✓ 前端已嵌入到 internal/httpapi/dist"
+
+## serve: 启动 Web 服务（自动嵌入前端资源）
+serve: build
+	./$(APP) serve

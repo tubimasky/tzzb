@@ -12,7 +12,8 @@ make install  # 装到 $(go env GOPATH)/bin
 make run ARGS="account list"
 ```
 
-也可用 `go build -o tzzb .`。`make help` 看全部目标。
+也可用 `go build -o tzzb .`，该方式只保证 CLI 和 HTTP API 可用，不会嵌入 Web 前端。
+要构建包含 Web 界面的单文件程序，请使用 `make build`。`make help` 看全部目标。
 
 ## 使用
 

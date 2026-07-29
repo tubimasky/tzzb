@@ -3,6 +3,7 @@ package service
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -65,17 +66,33 @@ type TrendData struct {
 	Points   []api.AssetTrendPoint
 }
 
+// TrendLoadWarning 描述某个账户趋势的降级来源。
+type TrendLoadWarning struct {
+	Account string `json:"account"`
+	Source  string `json:"source"`
+	Message string `json:"message"`
+}
+
 // LoadTrendForAccounts 加载多个账户的趋势数据
-func (s *TrendService) LoadTrendForAccounts(accounts []api.Account, days int) []TrendData {
+func (s *TrendService) LoadTrendForAccounts(accounts []api.Account, days int) ([]TrendData, []TrendLoadWarning) {
 	var results []TrendData
+	var warnings []TrendLoadWarning
 	for _, acc := range accounts {
 		points, err := s.client.GetAssetTrend(acc, days)
 		if err != nil {
+			warnings = append(warnings, TrendLoadWarning{Account: acc.Name(), Source: "资产趋势", Message: err.Error()})
+			continue
+		}
+		if len(points) == 0 {
+			warnings = append(warnings, TrendLoadWarning{Account: acc.Name(), Source: "资产趋势", Message: "上游未返回数据"})
 			continue
 		}
 
 		// 加载银证转账数据并填充到趋势点中
-		points = s.enrichTrendWithBankTransfers(acc, points, days)
+		points, err = s.enrichTrendWithBankTransfers(acc, points, days)
+		if err != nil {
+			warnings = append(warnings, TrendLoadWarning{Account: acc.Name(), Source: "银证转账", Message: err.Error()})
+		}
 
 		results = append(results, TrendData{
 			Account:  acc.Name(),
@@ -84,13 +101,17 @@ func (s *TrendService) LoadTrendForAccounts(accounts []api.Account, days int) []
 			Points:   points,
 		})
 	}
-	return results
+	return results, warnings
 }
 
 // enrichTrendWithBankTransfers 用银证转账数据丰富趋势点
-func (s *TrendService) enrichTrendWithBankTransfers(acc api.Account, points []api.AssetTrendPoint, days int) []api.AssetTrendPoint {
+func (s *TrendService) enrichTrendWithBankTransfers(acc api.Account, points []api.AssetTrendPoint, days int) ([]api.AssetTrendPoint, error) {
 	if len(points) == 0 {
-		return points
+		return points, nil
+	}
+	// 银证历史接口只覆盖股票侧账户；基金趋势沿用 asset_trend 自带资金流字段。
+	if acc.Category == "fund" {
+		return points, nil
 	}
 
 	// 获取银证转账数据
@@ -99,11 +120,11 @@ func (s *TrendService) enrichTrendWithBankTransfers(acc api.Account, points []ap
 
 	transfers, err := s.client.GetBankHistory(acc, startDate, endDate)
 	if err != nil {
-		return points // 获取失败时不处理，直接返回原始数据
+		return points, err
 	}
 
 	if len(transfers) == 0 {
-		return points
+		return points, nil
 	}
 
 	// 按日期建立转账映射
@@ -129,73 +150,113 @@ func (s *TrendService) enrichTrendWithBankTransfers(acc api.Account, points []ap
 		}
 	}
 
-	return points
+	return points, nil
 }
 
-// AggregateTrendData 聚合多个账户的趋势数据（按日期合并）
-func (s *TrendService) AggregateTrendData(accounts []api.Account, days int) []api.AssetTrendPoint {
-	dateMap := make(map[string]*api.AssetTrendPoint)
-
+// AggregateTrendDataWithWarnings 聚合多个账户趋势，并返回所有降级信息。
+func (s *TrendService) AggregateTrendDataWithWarnings(accounts []api.Account, days int) ([]api.AssetTrendPoint, []TrendLoadWarning) {
+	var series [][]api.AssetTrendPoint
+	var warnings []TrendLoadWarning
 	for _, acc := range accounts {
 		points, err := s.client.GetAssetTrend(acc, days)
 		if err != nil {
+			warnings = append(warnings, TrendLoadWarning{Account: acc.Name(), Source: "资产趋势", Message: err.Error()})
+			continue
+		}
+		if len(points) == 0 {
+			warnings = append(warnings, TrendLoadWarning{Account: acc.Name(), Source: "资产趋势", Message: "上游未返回数据"})
 			continue
 		}
 
 		// 加载银证转账数据并填充到趋势点中
-		points = s.enrichTrendWithBankTransfers(acc, points, days)
-
-		for _, p := range points {
-			if existing, ok := dateMap[p.Date]; ok {
-				existing.TotalAsset += p.TotalAsset
-				existing.Profit += p.Profit
-				existing.Cash += p.Cash
-				existing.MarketValue += p.MarketValue
-				existing.FundIn += p.FundIn
-				existing.FundOut += p.FundOut
-			} else {
-				dateMap[p.Date] = &api.AssetTrendPoint{
-					Date:        p.Date,
-					TotalAsset:  p.TotalAsset,
-					Profit:      p.Profit,
-					Cash:        p.Cash,
-					MarketValue: p.MarketValue,
-					FundIn:      p.FundIn,
-					FundOut:     p.FundOut,
-				}
-			}
+		points, err = s.enrichTrendWithBankTransfers(acc, points, days)
+		if err != nil {
+			warnings = append(warnings, TrendLoadWarning{Account: acc.Name(), Source: "银证转账", Message: err.Error()})
 		}
+		series = append(series, points)
 	}
+	aggregated := aggregateTrendSeries(series)
+	if len(series) > 1 && len(aggregated) == 0 {
+		warnings = append(warnings, TrendLoadWarning{
+			Account: "全部账户", Source: "日期对齐", Message: "账户趋势没有共同覆盖区间",
+		})
+	}
+	return aggregated, warnings
+}
 
-	if len(dateMap) == 0 {
+// AggregateTrendData 保留原调用形态；需要判断完整性时使用 AggregateTrendDataWithWarnings。
+func (s *TrendService) AggregateTrendData(accounts []api.Account, days int) []api.AssetTrendPoint {
+	points, _ := s.AggregateTrendDataWithWarnings(accounts, days)
+	return points
+}
+
+// aggregateTrendSeries 在所有账户共同覆盖区间内聚合曲线。
+// 某账户区间内缺点时向前填充资产快照，但不会重复计入上一日资金流。
+func aggregateTrendSeries(series [][]api.AssetTrendPoint) []api.AssetTrendPoint {
+	filtered := make([][]api.AssetTrendPoint, 0, len(series))
+	for _, points := range series {
+		if len(points) == 0 {
+			continue
+		}
+		cp := append([]api.AssetTrendPoint(nil), points...)
+		sort.Slice(cp, func(i, j int) bool { return cp[i].Date < cp[j].Date })
+		filtered = append(filtered, cp)
+	}
+	if len(filtered) == 0 {
 		return nil
 	}
 
-	// 转成有序列表（按日期排序）
-	var dates []string
-	for date := range dateMap {
-		dates = append(dates, date)
+	start := filtered[0][0].Date
+	end := filtered[0][len(filtered[0])-1].Date
+	dateSet := make(map[string]struct{})
+	for _, points := range filtered {
+		if points[0].Date > start {
+			start = points[0].Date
+		}
+		if last := points[len(points)-1].Date; last < end {
+			end = last
+		}
 	}
-	// 简单排序（日期字符串可以直接比较）
-	for i := 0; i < len(dates); i++ {
-		for j := i + 1; j < len(dates); j++ {
-			if dates[i] > dates[j] {
-				dates[i], dates[j] = dates[j], dates[i]
+	if start > end {
+		return nil
+	}
+	for _, points := range filtered {
+		for _, point := range points {
+			if point.Date >= start && point.Date <= end {
+				dateSet[point.Date] = struct{}{}
 			}
 		}
 	}
-
-	var points []api.AssetTrendPoint
-	for _, date := range dates {
-		p := dateMap[date]
-		// 计算仓位
-		if p.TotalAsset > 0 {
-			p.PositionRate = p.MarketValue / p.TotalAsset
-		}
-		points = append(points, *p)
+	dates := make([]string, 0, len(dateSet))
+	for date := range dateSet {
+		dates = append(dates, date)
 	}
+	sort.Strings(dates)
 
-	return points
+	indexes := make([]int, len(filtered))
+	result := make([]api.AssetTrendPoint, 0, len(dates))
+	for _, date := range dates {
+		total := api.AssetTrendPoint{Date: date}
+		for i, points := range filtered {
+			for indexes[i]+1 < len(points) && points[indexes[i]+1].Date <= date {
+				indexes[i]++
+			}
+			point := points[indexes[i]]
+			total.TotalAsset += point.TotalAsset
+			total.Profit += point.Profit
+			total.Cash += point.Cash
+			total.MarketValue += point.MarketValue
+			if point.Date == date {
+				total.FundIn += point.FundIn
+				total.FundOut += point.FundOut
+			}
+		}
+		if total.TotalAsset > 0 {
+			total.PositionRate = total.MarketValue / total.TotalAsset
+		}
+		result = append(result, total)
+	}
+	return result
 }
 
 // TrendStatistics 趋势统计数据
@@ -260,6 +321,78 @@ func (s *TrendService) LimitPoints(points []api.AssetTrendPoint, limit int) ([]a
 	return points[start:], start
 }
 
+// HoldingReturn 是剔除银证转账后的单日与累计收益率（均为小数）。
+type HoldingReturn struct {
+	Daily      float64
+	Cumulative float64
+	// Valid 为 false 表示当日无法算出 Daily（前一日资产为 0 或首日），
+	// 此时 Cumulative 沿用前值，不把曲线拉回 0。
+	Valid bool
+}
+
+// ComputeHoldingReturns 计算逐日收益率与复利累计收益率，用于和指数同轴对比。
+//
+// 单日口径：(当日资产 - 前日资产 - 当日资金净流入) / 前日资产，
+// 把银证转账从"收益"里剔掉——否则转入 10 万会被当成资产暴涨。
+// 累计用复利 ∏(1+r)-1 而非逐日相加，区间越长差别越明显。
+//
+// 用 TotalAsset 而不是 MarketValue：asset_trend 上游只给 asset/fundIn/fundOut，
+// MarketValue 是解析时按「无现金字段则视为满仓」估算出来的（见
+// parseAssetTrendData），并不比 TotalAsset 更精确。两者在该数据集里恒等，
+// 但用 TotalAsset 时口径可自证。
+func (s *TrendService) ComputeHoldingReturns(points []api.AssetTrendPoint) []HoldingReturn {
+	out := make([]HoldingReturn, len(points))
+	if len(points) == 0 {
+		return out
+	}
+
+	out[0] = HoldingReturn{Valid: true} // 首日是基准，累计 0
+	growth := 1.0
+
+	for i := 1; i < len(points); i++ {
+		prevAsset := points[i-1].TotalAsset
+		// 任一端资产为 0 基本是数据空洞（上游漏点），不是真的一天亏光。
+		// 直接跳过并沿用累计值，否则 daily 会算出 -100% 把整条曲线归零。
+		if prevAsset <= 0 || points[i].TotalAsset <= 0 {
+			out[i] = HoldingReturn{Cumulative: growth - 1}
+			continue
+		}
+
+		netIn := points[i].FundIn - points[i].FundOut
+		daily := (points[i].TotalAsset - prevAsset - netIn) / prevAsset
+		growth *= 1 + daily
+		out[i] = HoldingReturn{Daily: daily, Cumulative: growth - 1, Valid: true}
+	}
+
+	return out
+}
+
+// ComputeReturnDrawdown 在累计收益曲线上算最大回撤（小数，正值表示回撤幅度）。
+//
+// 与 ComputeStatistics 里基于总资产的回撤不同：这里的曲线已剔除出入金，
+// 转出资金不会被误算成回撤。
+func (s *TrendService) ComputeReturnDrawdown(returns []HoldingReturn) (float64, bool) {
+	if len(returns) < 2 {
+		return 0, false
+	}
+
+	peak := 0.0 // 收益曲线从 0 起步
+	maxDD := 0.0
+	for _, r := range returns {
+		if r.Cumulative > peak {
+			peak = r.Cumulative
+		}
+		// 净值口径：(1+peak) 相对 (1+cur) 的跌幅
+		if dd := (peak - r.Cumulative) / (1 + peak); dd > maxDD {
+			maxDD = dd
+		}
+	}
+
+	if maxDD <= 0 {
+		return 0, false
+	}
+	return maxDD, true
+}
 
 // TrendCommandService 趋势命令服务（封装重复的加载+渲染流程）
 type TrendCommandService struct {
@@ -282,7 +415,7 @@ func NewTrendCommandService(client *api.Client) *TrendCommandService {
 
 // ExecuteShowCommand 执行 show 命令逻辑
 func (s *TrendCommandService) ExecuteShowCommand(accountFilter string, days int, limit int, outputJSON bool, showBenchmark bool) {
-	accounts, err := s.client.GetAccountList()
+	accounts, err := s.client.GetAccountMetadata()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "获取账户失败: %v\n", err)
 		os.Exit(1)
@@ -294,7 +427,8 @@ func (s *TrendCommandService) ExecuteShowCommand(accountFilter string, days int,
 		os.Exit(0)
 	}
 
-	allData := s.trendService.LoadTrendForAccounts(matched, days)
+	allData, warnings := s.trendService.LoadTrendForAccounts(matched, days)
+	s.printTrendWarnings(warnings)
 
 	if outputJSON {
 		var results []map[string]any
@@ -312,7 +446,7 @@ func (s *TrendCommandService) ExecuteShowCommand(accountFilter string, days int,
 
 // ExecuteSummaryCommand 执行 summary 命令逻辑
 func (s *TrendCommandService) ExecuteSummaryCommand(category string, days int, limit int, outputJSON bool, showBenchmark bool) {
-	accounts, err := s.client.GetAccountList()
+	accounts, err := s.client.GetAccountMetadata()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "获取账户失败: %v\n", err)
 		os.Exit(1)
@@ -324,22 +458,22 @@ func (s *TrendCommandService) ExecuteSummaryCommand(category string, days int, l
 		result := map[string]any{}
 		switch category {
 		case "all", "":
-			result["all"] = s.jsonService.BuildAggregatedJSON("全部账户", s.trendService.AggregateTrendData(groups.All, days), days, limit)
+			result["all"] = s.jsonService.BuildAggregatedJSON("全部账户", s.aggregateTrendData(groups.All, days), days, limit)
 			if len(groups.Stock) > 0 {
-				result["stock"] = s.jsonService.BuildAggregatedJSON("股票账户", s.trendService.AggregateTrendData(groups.Stock, days), days, limit)
+				result["stock"] = s.jsonService.BuildAggregatedJSON("股票账户", s.aggregateTrendData(groups.Stock, days), days, limit)
 			}
 			if len(groups.Fund) > 0 {
-				result["fund"] = s.jsonService.BuildAggregatedJSON("基金账户", s.trendService.AggregateTrendData(groups.Fund, days), days, limit)
+				result["fund"] = s.jsonService.BuildAggregatedJSON("基金账户", s.aggregateTrendData(groups.Fund, days), days, limit)
 			}
 		case "stock":
 			if len(groups.Stock) > 0 {
-				result["stock"] = s.jsonService.BuildAggregatedJSON("股票账户", s.trendService.AggregateTrendData(groups.Stock, days), days, limit)
+				result["stock"] = s.jsonService.BuildAggregatedJSON("股票账户", s.aggregateTrendData(groups.Stock, days), days, limit)
 			} else {
 				result["error"] = "没有股票账户"
 			}
 		case "fund":
 			if len(groups.Fund) > 0 {
-				result["fund"] = s.jsonService.BuildAggregatedJSON("基金账户", s.trendService.AggregateTrendData(groups.Fund, days), days, limit)
+				result["fund"] = s.jsonService.BuildAggregatedJSON("基金账户", s.aggregateTrendData(groups.Fund, days), days, limit)
 			} else {
 				result["error"] = "没有基金账户"
 			}
@@ -354,22 +488,22 @@ func (s *TrendCommandService) ExecuteSummaryCommand(category string, days int, l
 	// 文本渲染
 	switch category {
 	case "all", "":
-		s.renderService.RenderAggregatedTrend("全部账户", s.trendService.AggregateTrendData(groups.All, days), days, limit, showBenchmark)
+		s.renderService.RenderAggregatedTrend("全部账户", s.aggregateTrendData(groups.All, days), days, limit, showBenchmark)
 		if len(groups.Stock) > 0 {
-			s.renderService.RenderAggregatedTrend("股票账户", s.trendService.AggregateTrendData(groups.Stock, days), days, limit, showBenchmark)
+			s.renderService.RenderAggregatedTrend("股票账户", s.aggregateTrendData(groups.Stock, days), days, limit, showBenchmark)
 		}
 		if len(groups.Fund) > 0 {
-			s.renderService.RenderAggregatedTrend("基金账户", s.trendService.AggregateTrendData(groups.Fund, days), days, limit, showBenchmark)
+			s.renderService.RenderAggregatedTrend("基金账户", s.aggregateTrendData(groups.Fund, days), days, limit, showBenchmark)
 		}
 	case "stock":
 		if len(groups.Stock) > 0 {
-			s.renderService.RenderAggregatedTrend("股票账户", s.trendService.AggregateTrendData(groups.Stock, days), days, limit, showBenchmark)
+			s.renderService.RenderAggregatedTrend("股票账户", s.aggregateTrendData(groups.Stock, days), days, limit, showBenchmark)
 		} else {
 			fmt.Println("没有股票账户")
 		}
 	case "fund":
 		if len(groups.Fund) > 0 {
-			s.renderService.RenderAggregatedTrend("基金账户", s.trendService.AggregateTrendData(groups.Fund, days), days, limit, showBenchmark)
+			s.renderService.RenderAggregatedTrend("基金账户", s.aggregateTrendData(groups.Fund, days), days, limit, showBenchmark)
 		} else {
 			fmt.Println("没有基金账户")
 		}
@@ -379,6 +513,17 @@ func (s *TrendCommandService) ExecuteSummaryCommand(category string, days int, l
 	}
 }
 
+func (s *TrendCommandService) aggregateTrendData(accounts []api.Account, days int) []api.AssetTrendPoint {
+	points, warnings := s.trendService.AggregateTrendDataWithWarnings(accounts, days)
+	s.printTrendWarnings(warnings)
+	return points
+}
+
+func (s *TrendCommandService) printTrendWarnings(warnings []TrendLoadWarning) {
+	for _, warning := range warnings {
+		fmt.Fprintf(os.Stderr, "警告: %s %s加载失败: %s\n", warning.Account, warning.Source, warning.Message)
+	}
+}
 
 // TrendJSONService 趋势 JSON 输出服务
 type TrendJSONService struct {
@@ -457,7 +602,6 @@ func (s *TrendJSONService) BuildAggregatedJSON(title string, points []api.AssetT
 func (s *TrendJSONService) PrintJSON(data map[string]any) {
 	formatter.PrintJSON(data)
 }
-
 
 // TrendRenderService 趋势渲染服务
 type TrendRenderService struct {
@@ -612,4 +756,3 @@ func (s *TrendRenderService) RenderAggregatedTrend(title string, points []api.As
 	stats := s.trendService.ComputeStatistics(points)
 	s.PrintTrendSummary(stats)
 }
-

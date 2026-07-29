@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -17,6 +18,11 @@ type BenchmarkPoint struct {
 // GetShanghaiIndexHistory 获取上证指数的历史数据
 // 使用腾讯财经的公开接口
 func GetShanghaiIndexHistory(days int) ([]BenchmarkPoint, error) {
+	return GetShanghaiIndexHistoryContext(context.Background(), days)
+}
+
+// GetShanghaiIndexHistoryContext 获取上证指数历史数据，并响应调用方取消。
+func GetShanghaiIndexHistoryContext(ctx context.Context, days int) ([]BenchmarkPoint, error) {
 	if days <= 0 {
 		days = 30
 	}
@@ -26,7 +32,7 @@ func GetShanghaiIndexHistory(days int) ([]BenchmarkPoint, error) {
 	url := fmt.Sprintf("https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=sh000001,day,,,%d,qfq", days+10)
 
 	client := &http.Client{Timeout: 10 * time.Second}
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("创建请求失败: %v", err)
 	}
@@ -76,7 +82,7 @@ func GetShanghaiIndexHistory(days int) ([]BenchmarkPoint, error) {
 			continue
 		}
 
-		date := line[0]    // 日期
+		date := line[0]     // 日期
 		closeStr := line[2] // 收盘价（第3列）
 
 		var close float64
@@ -89,6 +95,46 @@ func GetShanghaiIndexHistory(days int) ([]BenchmarkPoint, error) {
 	}
 
 	return points, nil
+}
+
+// CalculateCumulativeReturns 计算各交易日相对基准日的累计涨跌幅（小数）。
+//
+// baseDate 是对比区间的首日（YYYY-MM-DD）。基准收盘价取「不晚于 baseDate 的
+// 最后一个交易日」——因为 baseDate 本身可能是非交易日；取不到则退化为序列首日。
+// 直接用收盘价比值而非逐日收益求和，避免长区间的复利偏差。
+// 返回的 map 含基准日本身（值为 0）。
+func CalculateCumulativeReturns(points []BenchmarkPoint, baseDate string) map[string]float64 {
+	if len(points) == 0 {
+		return nil
+	}
+
+	// points 按日期升序，末次匹配即「不晚于 baseDate 的最后一个交易日」
+	base := 0.0
+	for _, p := range points {
+		if p.Date <= baseDate && p.Close > 0 {
+			base = p.Close
+		}
+	}
+	if base == 0 {
+		for _, p := range points {
+			if p.Close > 0 {
+				base = p.Close
+				break
+			}
+		}
+	}
+	if base == 0 {
+		return nil
+	}
+
+	returns := make(map[string]float64, len(points))
+	for _, p := range points {
+		if p.Close > 0 {
+			returns[p.Date] = p.Close/base - 1
+		}
+	}
+
+	return returns
 }
 
 // CalculateBenchmarkReturns 计算基准指数的每日收益率

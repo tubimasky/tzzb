@@ -2,7 +2,7 @@
 
 :root {
   /* Canvas */
-  --bg: #eef2f6;
+  --bg: #f3f5f8;
   --bg-elevated: #ffffff;
   --bg-muted: #f6f7f9;
   --bg-hover: #eef1f5;
@@ -75,7 +75,7 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Soft grid + radial glow — depth without clutter */
+/* Soft workspace wash — enough depth without turning the app into graph paper. */
 body::before {
   content: '';
   position: fixed;
@@ -83,14 +83,9 @@ body::before {
   z-index: -1;
   pointer-events: none;
   background:
-    radial-gradient(ellipse 80% 50% at 10% -10%, rgba(37, 99, 235, 0.08), transparent 50%),
-    radial-gradient(ellipse 60% 40% at 100% 0%, rgba(30, 58, 95, 0.05), transparent 45%),
-    linear-gradient(var(--border) 1px, transparent 1px),
-    linear-gradient(90deg, var(--border) 1px, transparent 1px);
-  background-size: auto, auto, 48px 48px, 48px 48px;
-  background-position: 0 0, 0 0, -1px -1px, -1px -1px;
-  opacity: 0.55;
-  mask-image: linear-gradient(to bottom, black 0%, black 40%, transparent 90%);
+    linear-gradient(180deg, rgba(37, 99, 235, 0.045), transparent 320px),
+    linear-gradient(90deg, rgba(15, 23, 42, 0.03), transparent 42%, rgba(37, 99, 235, 0.035));
+  opacity: 1;
 }
 
 #root {

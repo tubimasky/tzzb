@@ -2,47 +2,176 @@
   width: 100%;
 }
 
+.accounts-page-header {
+  margin-bottom: 1.15rem;
+}
+
+.overview-workbench {
+  display: grid;
+  grid-template-columns: minmax(360px, 0.9fr) minmax(540px, 1.35fr);
+  gap: 1rem;
+  align-items: stretch;
+  margin-bottom: 1.5rem;
+}
+
+.overview-stack {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+/* Primary desktop summary */
+.portfolio-hero-card {
+  position: relative;
+  min-height: 238px;
+  padding: 1.35rem 1.45rem;
+  overflow: hidden;
+  border: 1px solid rgba(14, 35, 58, 0.9);
+  border-radius: var(--r-lg);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.08) 0 1px, transparent 1px) 0 0 / 22px 22px,
+    linear-gradient(142deg, #102238 0%, #153456 54%, #235ea8 100%);
+  color: #fff;
+  box-shadow:
+    0 18px 42px rgba(15, 23, 42, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+
+.portfolio-hero-card::after {
+  content: '';
+  position: absolute;
+  inset: auto 1.35rem 1.2rem 1.35rem;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.28), transparent);
+}
+
+.hero-card-top {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.portfolio-hero-card .card-label,
+.portfolio-hero-card .card-hint,
+.portfolio-hero-card .card-unit {
+  color: rgba(255, 255, 255, 0.68);
+}
+
+.portfolio-value {
+  margin-top: 0.45rem;
+  font-family: var(--font-mono);
+  font-size: clamp(2.55rem, 4.2vw, 3.45rem);
+  font-weight: 650;
+  letter-spacing: -0.04em;
+  line-height: 1;
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+}
+
+.hero-icon {
+  width: 42px;
+  height: 42px;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.13);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
+}
+
+.hero-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.hero-metrics {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  margin-top: 1.45rem;
+  padding-top: 1rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.16);
+}
+
+.hero-metrics > div {
+  min-width: 0;
+  padding-right: 0.75rem;
+}
+
+.hero-metrics > div + div {
+  padding-left: 0.75rem;
+  border-left: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.hero-metrics span {
+  display: block;
+  margin-bottom: 0.3rem;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.hero-metrics strong {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.portfolio-hero-card .profit-positive {
+  color: #fecdd3;
+}
+
+.portfolio-hero-card .profit-negative {
+  color: #bbf7d0;
+}
+
+.portfolio-hero-card .card-hint {
+  position: relative;
+  z-index: 1;
+  margin-top: 1.15rem;
+}
+
 /* Metric cards */
 .summary-cards {
   display: grid;
-  grid-template-columns: minmax(360px, 1.35fr) repeat(3, minmax(170px, 1fr));
-  gap: 1rem;
-  margin-bottom: 1.75rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.85rem;
 }
 
 .card {
   position: relative;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.94)),
-    var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: var(--r-lg);
-  padding: 1.15rem 1.25rem 1.25rem;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05), inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  min-width: 0;
+  min-height: 128px;
   overflow: hidden;
+  padding: 1rem 1.05rem;
+  border: 1px solid rgba(203, 213, 225, 0.92);
+  border-radius: var(--r-md);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.92)),
+    var(--bg-elevated);
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.04),
+    inset 0 1px 0 rgba(255, 255, 255, 0.92);
   transition:
-    transform 0.2s ease,
-    box-shadow 0.2s ease,
-    border-color 0.2s ease;
+    transform 0.18s ease,
+    box-shadow 0.18s ease,
+    border-color 0.18s ease;
 }
 
 .card::before {
   content: '';
   position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 3px;
+  inset: 0 0 auto;
+  height: 3px;
   background: var(--brand-accent);
-  opacity: 0.85;
-}
-
-.card::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: linear-gradient(135deg, rgba(24, 50, 79, 0.05), transparent 42%);
 }
 
 .card.tone-up::before {
@@ -59,29 +188,8 @@
 
 .card:hover {
   transform: translateY(-2px);
-  box-shadow: var(--shadow-md);
   border-color: var(--border-strong);
-}
-
-.card.metric-hero {
-  min-height: 162px;
-  padding: 1.35rem 1.45rem;
-  background:
-    linear-gradient(90deg, rgba(37, 99, 235, 0.08), transparent 36%),
-    linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
-  border-color: #cbd5e1;
-  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.85);
-  color: var(--text);
-}
-
-.card.metric-hero::before {
-  width: 4px;
-  background: var(--brand-accent);
-  opacity: 1;
-}
-
-.card.metric-hero::after {
-  background: linear-gradient(135deg, rgba(37, 99, 235, 0.06), transparent 46%);
+  box-shadow: var(--shadow-md);
 }
 
 .card-top {
@@ -90,45 +198,27 @@
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 0.5rem;
+  gap: 0.6rem;
   margin-bottom: 0.85rem;
 }
 
 .card-label {
-  font-size: 0.75rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.045em;
   text-transform: uppercase;
   color: var(--text-tertiary);
 }
 
 .card-icon {
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
   display: grid;
   place-items: center;
+  border-radius: 9px;
   background: var(--brand-soft);
   color: var(--brand-accent);
-  flex-shrink: 0;
-}
-
-.card.metric-hero .card-label,
-.card.metric-hero .card-hint,
-.card.metric-hero .card-unit {
-  color: var(--text-tertiary);
-}
-
-.card.metric-hero .card-value {
-  margin-top: 0.15rem;
-  font-size: clamp(2.05rem, 3.2vw, 2.75rem);
-  color: var(--text);
-}
-
-.card.metric-hero .card-icon {
-  background: var(--brand-soft);
-  color: var(--brand-accent);
-  border: 1px solid var(--border);
 }
 
 .card.tone-up .card-icon {
@@ -150,8 +240,8 @@
   position: relative;
   z-index: 1;
   font-family: var(--font-mono);
-  font-size: clamp(1.35rem, 2vw, 1.65rem);
-  font-weight: 600;
+  font-size: clamp(1.28rem, 1.8vw, 1.55rem);
+  font-weight: 650;
   letter-spacing: -0.03em;
   color: var(--text);
   font-variant-numeric: tabular-nums;
@@ -160,7 +250,7 @@
 
 .card-unit {
   margin-left: 0.25rem;
-  font-size: 0.8rem;
+  font-size: 0.78rem;
   font-weight: 500;
   color: var(--text-tertiary);
   letter-spacing: 0;
@@ -170,21 +260,17 @@
   position: relative;
   z-index: 1;
   margin-top: 0.45rem;
-  font-size: 0.78rem;
   color: var(--text-tertiary);
+  font-size: 0.78rem;
 }
 
 .card-icon.ghost {
-  background: var(--bg-muted);
+  background: rgba(148, 163, 184, 0.16);
   color: transparent;
 }
 
-.card.metric-hero .card-icon.ghost {
-  background: var(--bg-muted);
-}
-
 .skeleton-card {
-  min-height: 138px;
+  min-height: 128px;
 }
 
 .skeleton-line {
@@ -194,10 +280,25 @@
   animation: shimmer 1.2s ease-in-out infinite;
 }
 
+.portfolio-hero-card .skeleton-line {
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.12) 0%,
+    rgba(255, 255, 255, 0.24) 45%,
+    rgba(255, 255, 255, 0.12) 90%
+  );
+  background-size: 200% 100%;
+}
+
 .skeleton-line.value {
   width: 58%;
   height: 1.7rem;
   margin-top: 0.95rem;
+}
+
+.portfolio-hero-card .skeleton-line.value {
+  width: min(260px, 72%);
+  height: 3rem;
 }
 
 .skeleton-line.hint {
@@ -207,16 +308,41 @@
 }
 
 .skeleton-chart-card {
-  margin-bottom: 1.5rem;
+  min-height: 396px;
+}
+
+/* Main trend panel */
+.trend-panel {
+  min-width: 0;
+  min-height: 396px;
+  padding: 1.15rem 1.25rem 1.2rem;
+  border-color: rgba(203, 213, 225, 0.92);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.94)),
+    var(--bg-elevated);
+  box-shadow:
+    0 18px 44px rgba(15, 23, 42, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.95);
+}
+
+.trend-panel .chart-card-head {
+  align-items: flex-start;
+  margin-bottom: 0.65rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.trend-panel .chart-card-title {
+  font-size: 1rem;
 }
 
 /* Table panel */
 .accounts-table-wrapper {
-  background: var(--bg-elevated);
+  overflow: hidden;
   border: 1px solid var(--border);
   border-radius: var(--r-lg);
+  background: var(--bg-elevated);
   box-shadow: var(--shadow-xs);
-  overflow: hidden;
 }
 
 .panel-header {
@@ -231,22 +357,22 @@
 
 .panel-header h2 {
   margin: 0;
+  color: var(--text);
   font-size: 0.95rem;
   font-weight: 650;
   letter-spacing: -0.02em;
-  color: var(--text);
 }
 
 .panel-meta {
-  font-size: 0.8rem;
   color: var(--text-tertiary);
+  font-size: 0.8rem;
   font-weight: 500;
 }
 
 .accounts-table {
   width: 100%;
-  border-collapse: collapse;
   min-width: 720px;
+  border-collapse: collapse;
 }
 
 .accounts-table th,
@@ -262,13 +388,13 @@
 }
 
 .accounts-table th {
+  border-bottom: 1px solid var(--border);
   background: var(--bg-muted);
-  font-weight: 600;
   color: var(--text-tertiary);
   font-size: 0.7rem;
-  text-transform: uppercase;
+  font-weight: 650;
   letter-spacing: 0.05em;
-  border-bottom: 1px solid var(--border);
+  text-transform: uppercase;
   white-space: nowrap;
 }
 
@@ -281,9 +407,9 @@
 }
 
 .accounts-table td {
-  font-size: 0.9rem;
-  color: var(--text);
   border-bottom: 1px solid var(--border);
+  color: var(--text);
+  font-size: 0.9rem;
 }
 
 .accounts-table tbody tr:last-child td {
@@ -304,69 +430,49 @@
 .acc-cat {
   display: inline-flex;
   padding: 0.15rem 0.5rem;
+  border: 1px solid var(--border);
   border-radius: var(--r-full);
-  font-size: 0.72rem;
-  font-weight: 600;
   background: var(--bg-muted);
   color: var(--text-secondary);
-  border: 1px solid var(--border);
+  font-size: 0.72rem;
+  font-weight: 600;
 }
 
 /* Position rate bar */
 .rate-cell {
   display: flex;
+  min-width: 88px;
   flex-direction: column;
   align-items: flex-end;
   gap: 0.35rem;
-  min-width: 88px;
 }
 
 .rate-bar {
   width: 72px;
   height: 4px;
+  overflow: hidden;
+  border: 1px solid var(--border);
   border-radius: var(--r-full);
   background: var(--bg-muted);
-  border: 1px solid var(--border);
-  overflow: hidden;
 }
 
 .rate-bar > span {
   display: block;
   height: 100%;
+  max-width: 100%;
   border-radius: inherit;
   background: linear-gradient(90deg, var(--brand-accent), #60a5fa);
-  max-width: 100%;
 }
 
-@media (max-width: 960px) {
-  .summary-cards {
-    grid-template-columns: repeat(2, 1fr);
-  }
-
-  .card.metric-hero {
-    grid-column: 1 / -1;
-  }
-}
-
-@media (max-width: 560px) {
-  .summary-cards {
-    grid-template-columns: 1fr;
-  }
-
-  .accounts-table-wrapper {
-    overflow-x: auto;
-  }
-}
-
-/* ——— 趋势图控件 ——— */
+/* Trend controls */
 .trend-controls {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: 0.5rem;
 }
 
-/* 区间统计条：起止资产 / 变化 / 最大回撤 */
 .trend-stats {
   display: flex;
   flex-wrap: wrap;
@@ -374,8 +480,8 @@
   margin-top: 0.85rem;
   padding-top: 0.85rem;
   border-top: 1px solid var(--border);
-  font-size: 0.8rem;
   color: var(--text-secondary);
+  font-size: 0.8rem;
   font-variant-numeric: tabular-nums;
 }
 
@@ -385,12 +491,11 @@
   color: var(--text);
 }
 
-/* 图表内联错误（趋势接口失败时不影响页面其余部分） */
 .chart-inline-error {
   padding: 0.6rem 0.8rem;
-  background: var(--up-soft);
   border: 1px solid #fecdd3;
   border-radius: var(--r-sm);
+  background: var(--up-soft);
   color: var(--up);
   font-size: 0.82rem;
   font-weight: 500;
@@ -399,10 +504,41 @@
 .chart-inline-warning {
   padding: 0.6rem 0.8rem;
   margin-bottom: 0.5rem;
-  background: #fffbeb;
   border: 1px solid #fcd34d;
   border-radius: var(--r-sm);
+  background: #fffbeb;
   color: #92400e;
   font-size: 0.82rem;
   font-weight: 500;
+}
+
+@media (max-width: 1080px) {
+  .overview-workbench {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 960px) {
+  .summary-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .summary-cards,
+  .hero-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .hero-metrics > div + div {
+    padding-top: 0.75rem;
+    padding-left: 0;
+    margin-top: 0.75rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.14);
+    border-left: none;
+  }
+
+  .accounts-table-wrapper {
+    overflow-x: auto;
+  }
 }

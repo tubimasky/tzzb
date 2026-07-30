@@ -23,17 +23,17 @@ export const palette = {
 /** 饼图/多标的分类色（蓝为主，避免与红绿盈亏语义冲突） */
 export const categoryColors = [
   '#2563eb',
-  '#1e3a5f',
+  '#f59e0b',
   '#0ea5e9',
-  '#6366f1',
-  '#8b5cf6',
-  '#0891b2',
-  '#3b82f6',
   '#64748b',
-  '#7c3aed',
-  '#0d9488',
+  '#1e3a5f',
+  '#38bdf8',
+  '#94a3b8',
+  '#0f766e',
   '#4f46e5',
+  '#b45309',
   '#0284c7',
+  '#475569',
 ];
 
 const fontFamily =

@@ -77,7 +77,7 @@ function IconBolt() {
 function Skeleton() {
   return (
     <div className="page accounts-page" aria-busy="true" aria-label="账户总览加载中">
-      <header className="page-header">
+      <header className="page-header accounts-page-header">
         <div className="page-header-text">
           <div className="page-eyebrow">Portfolio</div>
           <h1 className="page-title">
@@ -87,25 +87,40 @@ function Skeleton() {
         </div>
       </header>
 
-      <section className="summary-cards" aria-label="汇总指标加载中">
-        {['总资产', '持仓盈亏', '账户数量', '今日盈亏'].map((label, index) => (
-          <article className={`card skeleton-card${index === 0 ? ' metric-hero' : ''}`} key={label}>
-            <div className="card-top">
-              <div className="card-label">{label}</div>
+      <section className="overview-workbench" aria-label="汇总指标加载中">
+        <div className="overview-stack">
+          <article className="portfolio-hero-card skeleton-card">
+            <div className="hero-card-top">
+              <div>
+                <div className="card-label">总资产</div>
+                <div className="skeleton-line value" />
+              </div>
               <div className="card-icon ghost" />
             </div>
-            <div className="skeleton-line value" />
             <div className="skeleton-line hint" />
           </article>
-        ))}
-      </section>
 
-      <section className="chart-card span-2 skeleton-chart-card">
-        <div className="chart-card-head">
-          <h2 className="chart-card-title">资产趋势</h2>
-          <span className="chart-card-meta">加载中</span>
+          <div className="summary-cards" aria-label="辅助指标加载中">
+            {['持仓盈亏', '账户数量', '今日盈亏'].map((label) => (
+              <article className="card skeleton-card" key={label}>
+                <div className="card-top">
+                  <div className="card-label">{label}</div>
+                  <div className="card-icon ghost" />
+                </div>
+                <div className="skeleton-line value" />
+                <div className="skeleton-line hint" />
+              </article>
+            ))}
+          </div>
         </div>
-        <div className="skeleton-block tall" />
+
+        <section className="chart-card trend-panel skeleton-chart-card">
+          <div className="chart-card-head">
+            <h2 className="chart-card-title">资产趋势</h2>
+            <span className="chart-card-meta">加载中</span>
+          </div>
+          <div className="skeleton-block tall" />
+        </section>
       </section>
     </div>
   );
@@ -149,7 +164,7 @@ export default function AccountsPage() {
 
   return (
     <div className="page accounts-page">
-      <header className="page-header">
+      <header className="page-header accounts-page-header">
         <div className="page-header-text">
           <div className="page-eyebrow">Portfolio</div>
           <h1 className="page-title">
@@ -159,73 +174,99 @@ export default function AccountsPage() {
         </div>
       </header>
 
-      {data.complete === false && (
-        <div className="data-warning" role="status">
-          <strong>账户数据不完整</strong>
-          <span>
-            {(data.warnings ?? [])
-              .map((warning) => `${warning.account} ${warning.component ?? ''}`)
-              .join('；')}
-          </span>
+      <section className="overview-workbench" aria-label="账户总览">
+        <div className="overview-stack">
+          {data.complete === false && (
+            <div className="data-warning" role="status">
+              <strong>账户数据不完整</strong>
+              <span>
+                {(data.warnings ?? [])
+                  .map((warning) => `${warning.account} ${warning.component ?? ''}`)
+                  .join('；')}
+              </span>
+            </div>
+          )}
+
+          <article className="portfolio-hero-card tone-neutral">
+            <div className="hero-card-top">
+              <div>
+                <div className="card-label">总资产</div>
+                <div className="portfolio-value">
+                  {formatWan(summary.total_assets)}
+                  <span className="card-unit">万</span>
+                </div>
+              </div>
+              <div className="card-icon hero-icon">
+                <IconWallet />
+              </div>
+            </div>
+
+            <div className="hero-metrics" aria-label="核心资产指标">
+              <div>
+                <span>持仓盈亏</span>
+                <strong className={profitClass(summary.hold_profit)}>
+                  {formatWan(summary.hold_profit)} 万
+                </strong>
+              </div>
+              <div>
+                <span>今日盈亏</span>
+                <strong className={profitClass(summary.today_profit)}>
+                  {formatWan(summary.today_profit)} 万
+                </strong>
+              </div>
+              <div>
+                <span>账户数</span>
+                <strong>{accounts.length}</strong>
+              </div>
+            </div>
+
+            <div className="card-hint">含现金与持仓市值，来自本地账户聚合</div>
+          </article>
+
+          <div className="summary-cards" aria-label="辅助指标">
+            <article className={`card ${toneClass(summary.hold_profit)}`}>
+              <div className="card-top">
+                <div className="card-label">持仓盈亏</div>
+                <div className="card-icon">
+                  <IconTrend />
+                </div>
+              </div>
+              <div className={`card-value ${profitClass(summary.hold_profit)}`}>
+                {formatWan(summary.hold_profit)}
+                <span className="card-unit">万</span>
+              </div>
+              <div className="card-hint">当前未清仓持仓</div>
+            </article>
+
+            <article className="card tone-neutral">
+              <div className="card-top">
+                <div className="card-label">账户数量</div>
+                <div className="card-icon">
+                  <IconAccounts />
+                </div>
+              </div>
+              <div className="card-value">{accounts.length}</div>
+              <div className="card-hint">已记录投资账户</div>
+            </article>
+
+            <article className={`card ${toneClass(summary.today_profit)}`}>
+              <div className="card-top">
+                <div className="card-label">今日盈亏</div>
+                <div className="card-icon">
+                  <IconBolt />
+                </div>
+              </div>
+              <div className={`card-value ${profitClass(summary.today_profit)}`}>
+                {formatWan(summary.today_profit)}
+                <span className="card-unit">万</span>
+              </div>
+              <div className="card-hint">当日浮动 + 已实现</div>
+            </article>
+          </div>
         </div>
-      )}
 
-      <section className="summary-cards" aria-label="汇总指标">
-        <article className="card metric-hero tone-neutral">
-          <div className="card-top">
-            <div className="card-label">总资产</div>
-            <div className="card-icon">
-              <IconWallet />
-            </div>
-          </div>
-          <div className="card-value">
-            {formatWan(summary.total_assets)}
-            <span className="card-unit">万</span>
-          </div>
-          <div className="card-hint">含现金与持仓市值</div>
-        </article>
-
-        <article className={`card ${toneClass(summary.hold_profit)}`}>
-          <div className="card-top">
-            <div className="card-label">持仓盈亏</div>
-            <div className="card-icon">
-              <IconTrend />
-            </div>
-          </div>
-          <div className={`card-value ${profitClass(summary.hold_profit)}`}>
-            {formatWan(summary.hold_profit)}
-            <span className="card-unit">万</span>
-          </div>
-          <div className="card-hint">当前未清仓持仓</div>
-        </article>
-
-        <article className="card tone-neutral">
-          <div className="card-top">
-            <div className="card-label">账户数量</div>
-            <div className="card-icon">
-              <IconAccounts />
-            </div>
-          </div>
-          <div className="card-value">{accounts.length}</div>
-          <div className="card-hint">已记录投资账户</div>
-        </article>
-
-        <article className={`card ${toneClass(summary.today_profit)}`}>
-          <div className="card-top">
-            <div className="card-label">今日盈亏</div>
-            <div className="card-icon">
-              <IconBolt />
-            </div>
-          </div>
-          <div className={`card-value ${profitClass(summary.today_profit)}`}>
-            {formatWan(summary.today_profit)}
-            <span className="card-unit">万</span>
-          </div>
-          <div className="card-hint">当日浮动 + 已实现</div>
-        </article>
+        <TrendChart />
       </section>
-
-      <TrendChart />
 
       <div className="chart-grid">
         <AllocationChart accounts={accounts} />
@@ -348,7 +389,7 @@ function TrendChart() {
   const stats = trend?.stats;
 
   return (
-    <section className="chart-card span-2">
+    <section className="chart-card trend-panel">
       <div className="chart-card-head">
         <h2 className="chart-card-title">资产趋势</h2>
         <div className="trend-controls">
@@ -402,7 +443,7 @@ function TrendChart() {
           )}
           <EChart
             option={option}
-            height={300}
+            height={318}
             loading={loading}
             empty={!loading && (points?.length ?? 0) === 0 ? '暂无趋势数据' : null}
             ariaLabel={mode === 'return' ? '累计收益率与上证对比曲线' : '资产趋势曲线'}

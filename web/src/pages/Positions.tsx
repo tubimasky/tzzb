@@ -49,7 +49,7 @@ const TYPE_OPTIONS = [
 
 const VIEW_OPTIONS: { value: ViewMode; label: string; hint: string }[] = [
   { value: 'account', label: '按账户', hint: '分账户明细' },
-  { value: 'flat', label: '扁平表', hint: '同代码合并，一张表' },
+  { value: 'flat', label: '明细表', hint: '保留每个账户的原始持仓行' },
   { value: 'total', label: '跨账户汇总', hint: '同代码合并' },
 ];
 
@@ -343,14 +343,14 @@ export default function Positions() {
     return Object.entries(map).sort((a, b) => b[1].subtotal.value - a[1].subtotal.value);
   }, [sortedByAccount]);
 
-  // 扁平表 / 跨账户汇总：同代码合并（对齐 CLI position total / stock）
+  // 跨账户汇总：同代码合并（对齐 CLI position total / stock）
   const totals = useMemo(
     () => sortTotals(mergeByCode(filtered), sortKey, sortAsc),
     [filtered, sortKey, sortAsc],
   );
 
   const viewSummary = useMemo(() => {
-    const merged = viewMode === 'flat' || viewMode === 'total';
+    const merged = viewMode === 'total';
     let value = 0;
     let hold = 0;
     let day = 0;
@@ -410,7 +410,7 @@ export default function Positions() {
             持仓<em>明细</em>
           </h1>
           <p className="page-subtitle">
-            对齐 CLI：按账户分块 / 扁平合并表（同 total）/ 跨账户汇总；点击股票行可下钻明细
+            按账户分块、明细行直排或跨账户合并汇总；点击股票行可下钻明细
           </p>
         </div>
       </header>
@@ -543,16 +543,36 @@ export default function Positions() {
           </section>
         ))}
 
-      {!empty && (viewMode === 'flat' || viewMode === 'total') && (
+      {!empty && viewMode === 'flat' && (
         <section className="account-section">
           <div className="account-head">
             <h2 className="account-name">
-              {viewMode === 'flat' ? '扁平表' : '跨账户汇总'}
+              明细表
+              <span className="chip muted">未合并</span>
+              <span className="chip">{filtered.length} 行</span>
+            </h2>
+          </div>
+          <PositionTable
+            rows={sortedByAccount}
+            sortKey={sortKey}
+            sortAsc={sortAsc}
+            onSort={toggleSort}
+            showAccount
+            onOpen={goDetail}
+          />
+        </section>
+      )}
+
+      {!empty && viewMode === 'total' && (
+        <section className="account-section">
+          <div className="account-head">
+            <h2 className="account-name">
+              跨账户汇总
               <span className="chip muted">同代码合并</span>
               <span className="chip">{totals.length} 标的</span>
-              {viewSummary.lines !== totals.length && (
+              {filtered.length !== totals.length && (
                 <span className="chip muted" title="合并前明细行数">
-                  来自 {viewSummary.lines} 行
+                  来自 {filtered.length} 行
                 </span>
               )}
             </h2>
@@ -596,7 +616,7 @@ export default function Positions() {
             </div>
             <div className="summary-item">
               <div className="summary-label">
-                {viewMode === 'account' ? '明细行数' : '合并标的'}
+                {viewMode === 'total' ? '合并标的' : '明细行数'}
               </div>
               <div className="summary-value">{viewSummary.count}</div>
             </div>

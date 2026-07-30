@@ -76,14 +76,37 @@ function IconBolt() {
 
 function Skeleton() {
   return (
-    <div className="skeleton-page" aria-busy="true" aria-label="加载中">
-      <div className="skeleton-row">
-        <div className="skeleton-block" />
-        <div className="skeleton-block" />
-        <div className="skeleton-block" />
-        <div className="skeleton-block" />
-      </div>
-      <div className="skeleton-block tall" />
+    <div className="page accounts-page" aria-busy="true" aria-label="账户总览加载中">
+      <header className="page-header">
+        <div className="page-header-text">
+          <div className="page-eyebrow">Portfolio</div>
+          <h1 className="page-title">
+            账户<em>总览</em>
+          </h1>
+          <p className="page-subtitle">正在聚合本地账户资产、收益和仓位数据</p>
+        </div>
+      </header>
+
+      <section className="summary-cards" aria-label="汇总指标加载中">
+        {['总资产', '持仓盈亏', '账户数量', '今日盈亏'].map((label, index) => (
+          <article className={`card skeleton-card${index === 0 ? ' metric-hero' : ''}`} key={label}>
+            <div className="card-top">
+              <div className="card-label">{label}</div>
+              <div className="card-icon ghost" />
+            </div>
+            <div className="skeleton-line value" />
+            <div className="skeleton-line hint" />
+          </article>
+        ))}
+      </section>
+
+      <section className="chart-card span-2 skeleton-chart-card">
+        <div className="chart-card-head">
+          <h2 className="chart-card-title">资产趋势</h2>
+          <span className="chart-card-meta">加载中</span>
+        </div>
+        <div className="skeleton-block tall" />
+      </section>
     </div>
   );
 }
@@ -148,7 +171,7 @@ export default function AccountsPage() {
       )}
 
       <section className="summary-cards" aria-label="汇总指标">
-        <article className="card tone-neutral">
+        <article className="card metric-hero tone-neutral">
           <div className="card-top">
             <div className="card-label">总资产</div>
             <div className="card-icon">

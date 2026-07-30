@@ -37,8 +37,8 @@ export const categoryColors = [
 ];
 
 const fontFamily =
-  "'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif";
-const monoFamily = "'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace";
+  "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Microsoft YaHei', sans-serif";
+const monoFamily = "'SF Mono', 'Roboto Mono', Menlo, Consolas, ui-monospace, monospace";
 
 /** 盈亏取色：正红负绿 */
 export function plColor(n: number): string {

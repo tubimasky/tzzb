@@ -269,6 +269,13 @@ export default function AccountsPage() {
  * - 收益率对比：剔除出入金的复利累计收益 vs 上证同期累计涨跌，同一百分比轴，
  *   两线的落差就是超额收益。转账不会被误算成收益，这才是能和指数比的口径。
  */
+const TREND_RANGE_OPTIONS = [
+  { days: 30, label: '30 天' },
+  { days: 60, label: '60 天' },
+  { days: 90, label: '90 天' },
+  { days: 365, label: '今年' },
+] as const;
+
 function TrendChart() {
   const [days, setDays] = useState(30);
   const [mode, setMode] = useState<'asset' | 'return'>('asset');
@@ -322,18 +329,17 @@ function TrendChart() {
       <div className="chart-card-head">
         <h2 className="chart-card-title">资产趋势</h2>
         <div className="trend-controls">
-          {/* 上游按天数分档返回，只给实际有差异的档位 */}
           <div className="segmented tiny" role="tablist" aria-label="时间范围">
-            {[30, 60, 90].map((d) => (
+            {TREND_RANGE_OPTIONS.map((option) => (
               <button
-                key={d}
+                key={option.days}
                 type="button"
                 role="tab"
-                aria-selected={days === d}
-                className={days === d ? 'active' : undefined}
-                onClick={() => setDays(d)}
+                aria-selected={days === option.days}
+                className={days === option.days ? 'active' : undefined}
+                onClick={() => setDays(option.days)}
               >
-                {d} 天
+                {option.label}
               </button>
             ))}
           </div>

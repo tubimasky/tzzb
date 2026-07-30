@@ -290,15 +290,17 @@ func (c *Client) GetAssetTrend(acc Account, days int) ([]AssetTrendPoint, error)
 		// 根据 days 参数决定用哪个数据集和对应的基准
 		var data []map[string]any
 		var initZczs float64
+		limitToDays := false
 
 		if days <= 31 && len(wrap.MonthProfit) > 0 {
 			// 近一个月用 month_profit
 			data = wrap.MonthProfit
 			initZczs = wrap.MonthInitZczs.F()
 		} else if days > 60 && len(wrap.YearProfit) > 0 {
-			// 长期查询（>60 天）用 year_profit（年度完整数据）
+			// 中长期查询用 year_profit。今年口径不裁剪；90 天这类区间再按日期裁掉年初数据。
 			data = wrap.YearProfit
 			initZczs = wrap.YearInitZczs.F()
+			limitToDays = days < 365
 		} else if len(wrap.TotalAsset) > 0 {
 			// 中期（32-60 天）用 total_asset（最近 30 天完整数据）
 			data = wrap.TotalAsset
@@ -314,7 +316,11 @@ func (c *Client) GetAssetTrend(acc Account, days int) ([]AssetTrendPoint, error)
 			if initZczs == 0 {
 				initZczs = 1000 // 默认基准
 			}
-			return parseAssetTrendData(data, initZczs), nil
+			points := parseAssetTrendData(data, initZczs)
+			if limitToDays {
+				points = limitAssetTrendPointsByDays(points, days)
+			}
+			return points, nil
 		}
 	}
 
@@ -333,6 +339,38 @@ func (c *Client) GetAssetTrend(acc Account, days int) ([]AssetTrendPoint, error)
 	}
 
 	return nil, nil
+}
+
+func limitAssetTrendPointsByDays(points []AssetTrendPoint, days int) []AssetTrendPoint {
+	if days <= 0 || len(points) == 0 {
+		return points
+	}
+
+	var latest time.Time
+	hasLatest := false
+	for _, point := range points {
+		date, err := time.Parse("2006-01-02", point.Date)
+		if err != nil {
+			continue
+		}
+		if !hasLatest || date.After(latest) {
+			latest = date
+			hasLatest = true
+		}
+	}
+	if !hasLatest {
+		return points
+	}
+
+	cutoff := latest.AddDate(0, 0, -days+1)
+	out := make([]AssetTrendPoint, 0, len(points))
+	for _, point := range points {
+		date, err := time.Parse("2006-01-02", point.Date)
+		if err != nil || !date.Before(cutoff) {
+			out = append(out, point)
+		}
+	}
+	return out
 }
 
 // parseAssetTrendData 从原始 map 数组解析成 AssetTrendPoint。

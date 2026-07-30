@@ -70,8 +70,7 @@ type TrendResponse struct {
 
 // handleTrend GET /api/trend?days=30&category=all|stock|fund&account=&benchmark=1
 //
-// 注意：上游按天数分档返回（days=7 与 30 得到同一批点，90 与 365 同理），
-// 故前端只提供 30/60/90 这类实际有差异的档位。
+// 注意：上游按天数分档返回，前端提供 30/60/90/今年。
 // 该接口按账户串行拉取资产趋势 + 银证转账，耗时约数秒，前端应非阻塞加载。
 func (s *Server) handleTrend(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
@@ -131,8 +130,14 @@ func (s *Server) handleTrend(w http.ResponseWriter, r *http.Request) {
 	points, warnings := svc.AggregateTrendDataWithWarnings(target, days)
 	stats := svc.ComputeStatistics(points)
 
-	// 剔除银证转账后的逐日/累计收益率，用于与指数同轴对比。
-	returns := svc.ComputeHoldingReturns(points)
+	// 按月拼接盈亏日历，以真实每日盈亏计算累计收益；资产变化只用于资产视图。
+	dailyProfitLoss := map[string]float64{}
+	if len(points) > 0 {
+		var calendarWarnings []service.TrendLoadWarning
+		dailyProfitLoss, calendarWarnings = svc.LoadDailyProfitLoss(target, points[0].Date, points[len(points)-1].Date)
+		warnings = append(warnings, calendarWarnings...)
+	}
+	returns := svc.ComputeHoldingReturns(points, dailyProfitLoss)
 	returnDD, hasReturnDD := svc.ComputeReturnDrawdown(returns)
 
 	// 基准（上证指数）：取不到就静默降级，不让主数据失败。
@@ -169,7 +174,12 @@ func (s *Server) handleTrend(w http.ResponseWriter, r *http.Request) {
 
 	if len(returns) > 0 {
 		resp.Stats.CumReturn = returns[len(returns)-1].Cumulative
-		resp.Stats.HasCumReturn = len(points) >= 2
+		for i := 1; i < len(returns); i++ {
+			if returns[i].Valid {
+				resp.Stats.HasCumReturn = true
+				break
+			}
+		}
 	}
 
 	for i, p := range points {

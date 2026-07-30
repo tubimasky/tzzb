@@ -6,123 +6,23 @@ import (
 	"github.com/liyanran/tzzb-cli/pkg/api"
 )
 
-func TestHoldingProfitRateCalculation(t *testing.T) {
-	tests := []struct {
-		name          string
-		previousPoint api.AssetTrendPoint
-		currentPoint  api.AssetTrendPoint
-		expectedRate  float64
-		description   string
-	}{
-		{
-			name: "无资金流入，纯市值变化",
-			previousPoint: api.AssetTrendPoint{
-				Date:        "2026-01-01",
-				TotalAsset:  10000,
-				MarketValue: 10000,
-				FundIn:      0,
-				FundOut:     0,
-			},
-			currentPoint: api.AssetTrendPoint{
-				Date:        "2026-01-02",
-				TotalAsset:  10500,
-				MarketValue: 10500,
-				FundIn:      0,
-				FundOut:     0,
-			},
-			expectedRate: 0.05, // 5% 收益
-			description:  "市值从 10000 涨到 10500，无资金流入，收益率应为 5%",
-		},
-		{
-			name: "有资金流入，不应算作收益",
-			previousPoint: api.AssetTrendPoint{
-				Date:        "2026-01-01",
-				TotalAsset:  100,
-				MarketValue: 100,
-				FundIn:      0,
-				FundOut:     0,
-			},
-			currentPoint: api.AssetTrendPoint{
-				Date:        "2026-01-02",
-				TotalAsset:  200,
-				MarketValue: 200,
-				FundIn:      100,
-				FundOut:     0,
-			},
-			expectedRate: 0.0, // 0% 收益（充值不算收益）
-			description:  "充值 100 元后市值变为 200，实际收益率应为 0%",
-		},
-		{
-			name: "充值后有涨幅",
-			previousPoint: api.AssetTrendPoint{
-				Date:        "2026-01-01",
-				TotalAsset:  100,
-				MarketValue: 100,
-				FundIn:      0,
-				FundOut:     0,
-			},
-			currentPoint: api.AssetTrendPoint{
-				Date:        "2026-01-02",
-				TotalAsset:  210,
-				MarketValue: 210,
-				FundIn:      100,
-				FundOut:     0,
-			},
-			expectedRate: 0.10, // 10% 收益
-			description:  "充值 100 后市值涨到 210，实际市值增长 10（210-100-100=10），收益率 10%",
-		},
-		{
-			name: "有资金流出",
-			previousPoint: api.AssetTrendPoint{
-				Date:        "2026-01-01",
-				TotalAsset:  10000,
-				MarketValue: 10000,
-				FundIn:      0,
-				FundOut:     0,
-			},
-			currentPoint: api.AssetTrendPoint{
-				Date:        "2026-01-02",
-				TotalAsset:  9500,
-				MarketValue: 9500,
-				FundIn:      0,
-				FundOut:     500,
-			},
-			expectedRate: 0.0, // 0% 收益（纯取出）
-			description:  "取出 500 元后市值变为 9500，实际收益率应为 0%",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// 计算持仓盈亏率
-			marketValueChange := tt.currentPoint.MarketValue - tt.previousPoint.MarketValue
-			netFundFlow := tt.currentPoint.FundIn - tt.currentPoint.FundOut
-			actualMarketReturn := marketValueChange - netFundFlow
-			rate := actualMarketReturn / tt.previousPoint.MarketValue
-
-			if rate != tt.expectedRate {
-				t.Errorf("%s\n期望收益率: %.2f%%, 实际收益率: %.2f%%",
-					tt.description, tt.expectedRate*100, rate*100)
-			}
-		})
-	}
-}
-
 func TestComputeHoldingReturns(t *testing.T) {
 	svc := &TrendService{}
 
-	t.Run("转入不算收益，累计按复利", func(t *testing.T) {
+	t.Run("使用真实盈亏且累计按复利", func(t *testing.T) {
 		points := []api.AssetTrendPoint{
 			{Date: "2026-01-01", TotalAsset: 10000},
-			// 涨 10%
 			{Date: "2026-01-02", TotalAsset: 11000},
-			// 转入 5000，市值不动 → 当日收益 0
-			{Date: "2026-01-05", TotalAsset: 16000, FundIn: 5000},
-			// 跌 10%
+			{Date: "2026-01-05", TotalAsset: 16000},
 			{Date: "2026-01-06", TotalAsset: 14400},
 		}
+		dailyPL := map[string]float64{
+			"2026-01-02": 1000,  // 1000 / (11000 - 1000) = 10%
+			"2026-01-05": 0,     // 转入 5000，但真实盈亏为 0
+			"2026-01-06": -1600, // -1600 / (14400 + 1600) = -10%
+		}
 
-		got := svc.ComputeHoldingReturns(points)
+		got := svc.ComputeHoldingReturns(points, dailyPL)
 		if len(got) != 4 {
 			t.Fatalf("长度应为 4，实际 %d", len(got))
 		}
@@ -140,41 +40,55 @@ func TestComputeHoldingReturns(t *testing.T) {
 		}
 	})
 
-	t.Run("转出不算亏损", func(t *testing.T) {
+	t.Run("资产暴增但盈亏为零时收益为零", func(t *testing.T) {
 		points := []api.AssetTrendPoint{
 			{Date: "2026-01-01", TotalAsset: 10000},
-			{Date: "2026-01-02", TotalAsset: 9500, FundOut: 500},
+			{Date: "2026-01-02", TotalAsset: 110000},
 		}
 
-		got := svc.ComputeHoldingReturns(points)
-		if got[1].Daily != 0 {
-			t.Errorf("纯转出应为 0 收益，实际 %.4f", got[1].Daily)
+		got := svc.ComputeHoldingReturns(points, map[string]float64{"2026-01-02": 0})
+		if !got[1].Valid || got[1].Daily != 0 || got[1].Cumulative != 0 {
+			t.Errorf("资产转入不应产生收益，实际 %+v", got[1])
 		}
 	})
 
-	t.Run("前一日资产为 0 时标记 invalid 且不重置累计", func(t *testing.T) {
+	t.Run("缺少盈亏日历时标记 invalid 且不重置累计", func(t *testing.T) {
 		points := []api.AssetTrendPoint{
 			{Date: "2026-01-01", TotalAsset: 10000},
 			{Date: "2026-01-02", TotalAsset: 11000},
-			{Date: "2026-01-05", TotalAsset: 0},
-			{Date: "2026-01-06", TotalAsset: 5000},
+			{Date: "2026-01-05", TotalAsset: 12000},
 		}
 
-		got := svc.ComputeHoldingReturns(points)
-		if got[3].Valid {
-			t.Error("前一日资产为 0，第 4 天应为 invalid")
+		got := svc.ComputeHoldingReturns(points, map[string]float64{"2026-01-02": 1000})
+		if got[2].Valid {
+			t.Error("缺少日历数据的日期应为 invalid")
 		}
-		// 累计沿用 1.10 - 1
-		if diff := got[3].Cumulative - 0.10; diff > 1e-9 || diff < -1e-9 {
-			t.Errorf("累计应沿用 10%%，实际 %.4f%%", got[3].Cumulative*100)
+		if diff := got[2].Cumulative - 0.10; diff > 1e-9 || diff < -1e-9 {
+			t.Errorf("累计应沿用 10%%，实际 %.4f%%", got[2].Cumulative*100)
 		}
 	})
 
 	t.Run("空输入", func(t *testing.T) {
-		if got := svc.ComputeHoldingReturns(nil); len(got) != 0 {
+		if got := svc.ComputeHoldingReturns(nil, nil); len(got) != 0 {
 			t.Errorf("空输入应返回空切片，实际长度 %d", len(got))
 		}
 	})
+}
+
+func TestMonthsInRange(t *testing.T) {
+	got, err := monthsInRange("2026-04-22", "2026-07-29")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"202604", "202605", "202606", "202607"}
+	if len(got) != len(want) {
+		t.Fatalf("月份数量：期望 %d，实际 %d (%v)", len(want), len(got), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("第 %d 个月：期望 %s，实际 %s", i, want[i], got[i])
+		}
+	}
 }
 
 func TestComputeReturnDrawdown(t *testing.T) {
@@ -207,7 +121,7 @@ func TestComputeReturnDrawdown(t *testing.T) {
 	}
 }
 
-func TestAggregateTrendSeriesAlignsAccounts(t *testing.T) {
+func TestAggregateTrendSeriesUsesUnionDates(t *testing.T) {
 	series := [][]api.AssetTrendPoint{
 		{
 			{Date: "2026-01-01", TotalAsset: 100, MarketValue: 80, FundIn: 10},
@@ -222,19 +136,22 @@ func TestAggregateTrendSeriesAlignsAccounts(t *testing.T) {
 	}
 
 	got := aggregateTrendSeries(series)
-	if len(got) != 3 {
-		t.Fatalf("共同区间应包含 3 个日期，实际 %d", len(got))
+	if len(got) != 4 {
+		t.Fatalf("日期并集应包含 4 个日期，实际 %d", len(got))
 	}
-	if got[0].Date != "2026-01-02" || got[2].Date != "2026-01-04" {
+	if got[0].Date != "2026-01-01" || got[3].Date != "2026-01-04" {
 		t.Fatalf("日期范围错误: %s ~ %s", got[0].Date, got[2].Date)
 	}
-	if got[1].TotalAsset != 320 {
-		t.Errorf("缺点账户应向前填充，2026-01-03 总资产期望 320，实际 %.2f", got[1].TotalAsset)
+	if got[0].TotalAsset != 100 {
+		t.Errorf("晚出现账户首日前不应回填，2026-01-01 总资产期望 100，实际 %.2f", got[0].TotalAsset)
 	}
-	if got[1].FundIn != 0 || got[1].FundOut != 0 {
-		t.Errorf("向前填充不应重复资金流，实际 in=%.2f out=%.2f", got[1].FundIn, got[1].FundOut)
+	if got[2].TotalAsset != 320 {
+		t.Errorf("缺点账户应向前填充，2026-01-03 总资产期望 320，实际 %.2f", got[2].TotalAsset)
 	}
-	if got[0].FundIn != 20 || got[2].FundOut != 5 {
-		t.Errorf("真实数据点资金流丢失: first=%+v last=%+v", got[0], got[2])
+	if got[2].FundIn != 0 || got[2].FundOut != 0 {
+		t.Errorf("向前填充不应重复资金流，实际 in=%.2f out=%.2f", got[2].FundIn, got[2].FundOut)
+	}
+	if got[0].FundIn != 10 || got[1].FundIn != 20 || got[3].FundOut != 5 {
+		t.Errorf("真实数据点资金流丢失: first=%+v second=%+v last=%+v", got[0], got[1], got[3])
 	}
 }

@@ -220,7 +220,7 @@ export interface AnalysisPosRateDTO {
 
 // --- 资产趋势 /api/trend ---
 // position_rate / profit_rate / *_return / benchmark* / max_drawdown 均为小数。
-// 上游按天数分档：days=7 与 30 返回同一批点，90 与 365 同理，故只暴露 30/60/90。
+// 上游按天数分档返回，前端暴露 30/60/90/今年。
 
 export interface TrendPoint {
   date: string; // YYYY-MM-DD

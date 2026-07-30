@@ -176,11 +176,6 @@ func (s *TrendService) AggregateTrendDataWithWarnings(accounts []api.Account, da
 		series = append(series, points)
 	}
 	aggregated := aggregateTrendSeries(series)
-	if len(series) > 1 && len(aggregated) == 0 {
-		warnings = append(warnings, TrendLoadWarning{
-			Account: "全部账户", Source: "日期对齐", Message: "账户趋势没有共同覆盖区间",
-		})
-	}
 	return aggregated, warnings
 }
 
@@ -190,8 +185,79 @@ func (s *TrendService) AggregateTrendData(accounts []api.Account, days int) []ap
 	return points
 }
 
-// aggregateTrendSeries 在所有账户共同覆盖区间内聚合曲线。
-// 某账户区间内缺点时向前填充资产快照，但不会重复计入上一日资金流。
+// LoadDailyProfitLoss 按月拼接盈亏日历，返回区间内每天的真实盈亏。
+// combineCalendar 直接给出股票 + 基金盈亏，不用资产差额倒推，因此转账、申购和赎回
+// 不会被误算成投资收益。
+func (s *TrendService) LoadDailyProfitLoss(accounts []api.Account, startDate, endDate string) (map[string]float64, []TrendLoadWarning) {
+	result := make(map[string]float64)
+	months, err := monthsInRange(startDate, endDate)
+	if err != nil {
+		return result, []TrendLoadWarning{{Account: "全部账户", Source: "盈亏日历", Message: err.Error()}}
+	}
+
+	var stockRefs []api.StockAccountRef
+	if hasStockAccount(accounts) {
+		stockRefs, err = s.client.GetStockAccounts()
+		if err != nil {
+			return result, []TrendLoadWarning{{
+				Account: "全部账户", Source: "盈亏日历", Message: fmt.Sprintf("获取股票账户失败: %v", err),
+			}}
+		}
+	}
+	params := api.BuildCalendarParams(accounts, stockRefs)
+
+	var warnings []TrendLoadWarning
+	for _, month := range months {
+		calendar, err := s.client.GetCalendarDaily(params, month)
+		if err != nil {
+			warnings = append(warnings, TrendLoadWarning{
+				Account: "全部账户", Source: "盈亏日历", Message: fmt.Sprintf("%s: %v", month, err),
+			})
+			continue
+		}
+		for _, point := range calendar.Points {
+			date := compactDateToISO(point.Date)
+			if date < startDate || date > endDate {
+				continue
+			}
+			result[date] = point.TotalPL
+		}
+	}
+	return result, warnings
+}
+
+func monthsInRange(startDate, endDate string) ([]string, error) {
+	start, err := time.Parse("2006-01-02", startDate)
+	if err != nil {
+		return nil, fmt.Errorf("起始日期格式错误: %s", startDate)
+	}
+	end, err := time.Parse("2006-01-02", endDate)
+	if err != nil {
+		return nil, fmt.Errorf("结束日期格式错误: %s", endDate)
+	}
+	if start.After(end) {
+		return nil, fmt.Errorf("起始日期晚于结束日期: %s > %s", startDate, endDate)
+	}
+
+	current := time.Date(start.Year(), start.Month(), 1, 0, 0, 0, 0, time.UTC)
+	last := time.Date(end.Year(), end.Month(), 1, 0, 0, 0, 0, time.UTC)
+	var months []string
+	for !current.After(last) {
+		months = append(months, current.Format("200601"))
+		current = current.AddDate(0, 1, 0)
+	}
+	return months, nil
+}
+
+func compactDateToISO(date string) string {
+	if len(date) != 8 {
+		return date
+	}
+	return date[:4] + "-" + date[4:6] + "-" + date[6:]
+}
+
+// aggregateTrendSeries 按所有账户日期并集聚合曲线。
+// 某账户首日前按 0 处理；首日后缺点时向前填充资产快照，但不会重复计入上一日资金流。
 func aggregateTrendSeries(series [][]api.AssetTrendPoint) []api.AssetTrendPoint {
 	filtered := make([][]api.AssetTrendPoint, 0, len(series))
 	for _, points := range series {
@@ -206,25 +272,10 @@ func aggregateTrendSeries(series [][]api.AssetTrendPoint) []api.AssetTrendPoint 
 		return nil
 	}
 
-	start := filtered[0][0].Date
-	end := filtered[0][len(filtered[0])-1].Date
 	dateSet := make(map[string]struct{})
 	for _, points := range filtered {
-		if points[0].Date > start {
-			start = points[0].Date
-		}
-		if last := points[len(points)-1].Date; last < end {
-			end = last
-		}
-	}
-	if start > end {
-		return nil
-	}
-	for _, points := range filtered {
 		for _, point := range points {
-			if point.Date >= start && point.Date <= end {
-				dateSet[point.Date] = struct{}{}
-			}
+			dateSet[point.Date] = struct{}{}
 		}
 	}
 	dates := make([]string, 0, len(dateSet))
@@ -238,6 +289,9 @@ func aggregateTrendSeries(series [][]api.AssetTrendPoint) []api.AssetTrendPoint 
 	for _, date := range dates {
 		total := api.AssetTrendPoint{Date: date}
 		for i, points := range filtered {
+			if date < points[0].Date {
+				continue
+			}
 			for indexes[i]+1 < len(points) && points[indexes[i]+1].Date <= date {
 				indexes[i]++
 			}
@@ -330,17 +384,12 @@ type HoldingReturn struct {
 	Valid bool
 }
 
-// ComputeHoldingReturns 计算逐日收益率与复利累计收益率，用于和指数同轴对比。
+// ComputeHoldingReturns 用盈亏日历的真实每日盈亏计算复利累计收益率。
 //
-// 单日口径：(当日资产 - 前日资产 - 当日资金净流入) / 前日资产，
-// 把银证转账从"收益"里剔掉——否则转入 10 万会被当成资产暴涨。
-// 累计用复利 ∏(1+r)-1 而非逐日相加，区间越长差别越明显。
-//
-// 用 TotalAsset 而不是 MarketValue：asset_trend 上游只给 asset/fundIn/fundOut，
-// MarketValue 是解析时按「无现金字段则视为满仓」估算出来的（见
-// parseAssetTrendData），并不比 TotalAsset 更精确。两者在该数据集里恒等，
-// 但用 TotalAsset 时口径可自证。
-func (s *TrendService) ComputeHoldingReturns(points []api.AssetTrendPoint) []HoldingReturn {
+// 单日口径：当日盈亏 / (当日总资产 - 当日盈亏)。分母是扣除当日盈亏后的资金基数，
+// 转账、申购、新账户起始资产只改变本金，不进入收益分子。某日缺少盈亏日历数据时
+// 标记为无效并沿用累计值，绝不回退到资产差额。
+func (s *TrendService) ComputeHoldingReturns(points []api.AssetTrendPoint, dailyProfitLoss map[string]float64) []HoldingReturn {
 	out := make([]HoldingReturn, len(points))
 	if len(points) == 0 {
 		return out
@@ -350,16 +399,14 @@ func (s *TrendService) ComputeHoldingReturns(points []api.AssetTrendPoint) []Hol
 	growth := 1.0
 
 	for i := 1; i < len(points); i++ {
-		prevAsset := points[i-1].TotalAsset
-		// 任一端资产为 0 基本是数据空洞（上游漏点），不是真的一天亏光。
-		// 直接跳过并沿用累计值，否则 daily 会算出 -100% 把整条曲线归零。
-		if prevAsset <= 0 || points[i].TotalAsset <= 0 {
+		profitLoss, ok := dailyProfitLoss[points[i].Date]
+		capitalBase := points[i].TotalAsset - profitLoss
+		if !ok || capitalBase <= 0 {
 			out[i] = HoldingReturn{Cumulative: growth - 1}
 			continue
 		}
 
-		netIn := points[i].FundIn - points[i].FundOut
-		daily := (points[i].TotalAsset - prevAsset - netIn) / prevAsset
+		daily := profitLoss / capitalBase
 		growth *= 1 + daily
 		out[i] = HoldingReturn{Daily: daily, Cumulative: growth - 1, Valid: true}
 	}

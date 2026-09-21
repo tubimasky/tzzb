@@ -19,27 +19,34 @@ make run ARGS="account list"
 
 ### 1. 登录（配置 Cookie）
 
-工具用浏览器登录态的 Cookie 认证。获取步骤：
-
-1. 浏览器打开 https://tzzb.10jqka.com.cn/pc 并登录
-2. F12 打开开发者工具 → Network 标签
-3. 刷新页面，点任意一个 `caishen_httpserver` 请求
-4. 在 Request Headers 里复制完整的 `Cookie` 值
-
-由于 Cookie 很长，终端交互式粘贴会因单行长度限制卡住，**推荐用管道或文件传入**：
+工具用浏览器登录态的 Cookie 认证。**默认自动从本机浏览器读取，不需要手工复制**：
 
 ```bash
-# 从剪贴板管道传入（最省事）
-pbpaste | tzzb login
+tzzb login
+```
 
+只要浏览器里登录过 https://tzzb.10jqka.com.cn/pc，这一条就能直接成功。它会扫描
+Chrome / Edge / Brave / Chromium 的所有 profile，按登录新鲜度逐个联网校验，取第一个
+可用的写入 `~/.tzzb/cookies`（权限 0600），并从中解析 `userid`。
+
+首次运行 macOS 会弹钥匙串授权框（读取浏览器 Cookie 的解密密钥），请点**“始终允许”**。
+只想读某个浏览器时加 `--browser chrome`。
+
+Cookie 过期后，其它命令与 `tzzb serve` 会自动重新读取浏览器登录态并重试一次，
+不再需要手动重新登录（`serve` 也不用重启）。
+
+也可以手工导入 Cookie：
+
+```bash
 # 从文件读取
 tzzb login --file cookie.txt
 
 # 直接参数传入
 tzzb login --cookie "userid=xxx; u_name=xxx; ..."
-```
 
-Cookie 存到 `~/.tzzb/cookies`（权限 0600）。工具会自动从 Cookie 里解析 `userid`。
+# 从剪贴板管道传入（Cookie 很长，交互式粘贴会被终端单行长度限制卡住）
+pbpaste | tzzb login
+```
 
 ### 2. 账户列表
 

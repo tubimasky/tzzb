@@ -106,7 +106,7 @@ func (e *AccountLoadError) Error() string {
 
 // GetAccountMetadata 只拉取账户标识和名称，不请求持仓或账户卡。
 func (c *Client) GetAccountMetadata() ([]Account, error) {
-	ex, err := c.call(epAccountList, map[string]string{"userid": c.uid})
+	ex, err := c.call(epAccountList, nil)
 	if err != nil {
 		return nil, err
 	}

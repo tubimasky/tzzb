@@ -25,7 +25,7 @@ type DayTrade struct {
 
 // GetDayTrades 拉某账户当日成交（插件 requestMergeTradesToday）。
 func (c *Client) GetDayTrades(acc Account) ([]DayTrade, error) {
-	params := map[string]string{"userid": c.uid}
+	params := map[string]string{}
 	if acc.ManualID != "" {
 		params["manual_id"] = acc.ManualID
 	}
@@ -487,7 +487,6 @@ type BankTransfer struct {
 // 注意：必须传 fund_key 参数才能查到数据
 func (c *Client) GetBankHistory(acc Account, startDate, endDate time.Time) ([]BankTransfer, error) {
 	params := map[string]string{
-		"userid":     c.uid,
 		"start_date": startDate.Format("2006-01-02"),
 		"end_date":   endDate.Format("2006-01-02"),
 	}

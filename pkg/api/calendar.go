@@ -32,7 +32,6 @@ func (c *Client) GetStockAccounts() ([]StockAccountRef, error) {
 	params := map[string]string{
 		"id":          "773777",
 		"accountType": "all_plus",
-		"userid":      c.uid,
 		"terminal":    "1",
 		"version":     "1",
 		"device":      "1",

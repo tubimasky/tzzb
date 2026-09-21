@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -37,8 +39,8 @@ const (
 
 	// 股票时间维度盈亏（梯队 A，全账户合算走 Merge 变体）。
 	// 关键坑：startdate/enddate 用 YYYYMMDD 无横杠（与 combineCalendar 带横杠不同，带横杠会返回 -2 服务器繁忙）。
-	epStockMonthlyPL = "/caishen_fund/stock/monthlyProfitLossMerge" // 某年各月盈亏
-	epStockCodePL    = "/caishen_fund/stock/profitlossByCodeMerge"  // 某区间每日盈亏 + 区间内个股盈亏
+	epStockMonthlyPL = "/caishen_fund/stock/monthlyProfitLossMerge" // 某年各月盈亏（个股盈亏为年度口径）
+	epStockCodePL    = "/caishen_fund/stock/profitlossByCodeMerge"  // 某区间每日盈亏 + 个股盈亏（后者为整月口径，起始日须为月初）
 
 	// 股票仓位分析（梯队 B）。fundkey 用 stock 账户 fund_key（非基金 fundid）。
 	epAnalysisPosDist = "/caishen_fund/stockAnalysisSummary/position_distribution" // 持仓分布（按市值）
@@ -91,19 +93,69 @@ func (f *flexStr) UnmarshalJSON(b []byte) error {
 
 func (f flexStr) String() string { return string(f) }
 
+// ErrAuthExpired 表示服务端拒绝了当前登录态。
+//
+// 403 也可能是 WAF 拦了请求（缺 origin/referer 等），所以拿到这个错误并不等于
+// Cookie 一定过期，必须再看能不能真的取到一份不同的新 Cookie。
+var ErrAuthExpired = errors.New("登录态失效")
+
+// session 是共享的登录态。WithContext 是浅拷贝，凡是"刷新后要让所有副本都看见"
+// 的东西都必须挂在指针后面，否则在克隆上写入的 Cookie 传不回父客户端——那样
+// 常驻的 tzzb serve 就得重启才能生效。
+type session struct {
+	mu      sync.RWMutex
+	cookies string
+	uid     string
+}
+
+func (s *session) get() (cookies string, uid string) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.cookies, s.uid
+}
+
+func (s *session) set(cookies string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cookies = cookies
+	s.uid = uidFromCookie(cookies)
+}
+
+// authState 是自动续期的共享状态。同样必须是指针：互斥锁按值内嵌会被浅拷贝复制。
+type authState struct {
+	mu          sync.Mutex
+	refresher   func() (string, error)
+	lastAttempt time.Time
+}
+
 // Client 是投资账本 API 的客户端，认证依赖浏览器登录后的 Cookie。
 type Client struct {
 	httpClient *http.Client
-	cookies    string
-	uid        string
 	ctx        context.Context
+	sess       *session
+	auth       *authState
 }
 
 // WithContext 返回绑定请求上下文的浅拷贝，可安全用于并发 HTTP handler。
+// 登录态与续期状态仍与父客户端共享。
 func (c *Client) WithContext(ctx context.Context) *Client {
 	clone := *c
 	clone.ctx = ctx
 	return &clone
+}
+
+// uid 返回当前登录态里的用户 id。
+func (c *Client) uid() string {
+	_, uid := c.sess.get()
+	return uid
+}
+
+// SetAuthRefresher 注入"重新获取 Cookie"的回调，由 cmd 层接到浏览器读取上。
+// pkg/api 不关心 Cookie 从哪来，因此这里只收一个函数，也便于测试塞假实现。
+func (c *Client) SetAuthRefresher(refresher func() (string, error)) {
+	c.auth.mu.Lock()
+	defer c.auth.mu.Unlock()
+	c.auth.refresher = refresher
 }
 
 func NewClient() *Client {
@@ -116,11 +168,13 @@ func NewClientWithHTTPClient(httpClient *http.Client, cookies string) *Client {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 30 * time.Second}
 	}
-	return &Client{
+	client := &Client{
 		httpClient: httpClient,
-		cookies:    cookies,
-		uid:        uidFromCookie(cookies),
+		sess:       &session{},
+		auth:       &authState{},
 	}
+	client.sess.set(cookies)
+	return client
 }
 
 func cookiePath() (string, error) {
@@ -156,9 +210,14 @@ func (c *Client) SaveCookies(cookies string) error {
 	if err := os.WriteFile(path, []byte(cookies), 0600); err != nil {
 		return err
 	}
-	c.cookies = cookies
-	c.uid = uidFromCookie(cookies)
+	c.sess.set(cookies)
 	return nil
+}
+
+// NewClientWithCookies 用指定的 Cookie 建一个临时客户端。
+// 主要用途是在写盘之前先验证一份 Cookie 能不能用。
+func NewClientWithCookies(cookies string) *Client {
+	return NewClientWithHTTPClient(nil, cookies)
 }
 
 // uidFromCookie 从 Cookie 头里提取用户 id。
@@ -179,21 +238,59 @@ func uidFromCookie(cookie string) string {
 	return ""
 }
 
+// refreshCooldown 限制自动续期的频率。serve 是常驻进程，一批并发请求同时拿到
+// 403 时，不应该每个请求都去读一次浏览器数据库和钥匙串。
+const refreshCooldown = 30 * time.Second
+
+// tryRefresh 重新获取登录态，返回是否拿到了与当前不同的可用 Cookie。
+// 拿到的还是同一份，就说明失效原因不是过期（多半是 WAF 拦的），此时不重试。
+func (c *Client) tryRefresh() bool {
+	auth := c.auth
+	auth.mu.Lock()
+	defer auth.mu.Unlock()
+
+	if auth.refresher == nil || time.Since(auth.lastAttempt) < refreshCooldown {
+		return false
+	}
+	auth.lastAttempt = time.Now()
+
+	cookies, err := auth.refresher()
+	if err != nil {
+		return false
+	}
+	cookies = strings.TrimSpace(cookies)
+	if cookies == "" {
+		return false
+	}
+	if current, _ := c.sess.get(); cookies == current {
+		return false
+	}
+	if err := c.SaveCookies(cookies); err != nil {
+		return false
+	}
+	fmt.Fprintln(os.Stderr, "↻ 登录态已过期，已自动从浏览器续期")
+	return true
+}
+
 // post 发起一个表单编码的 POST 请求。origin/referer 头是绕过 WAF 403 的关键。
 func (c *Client) post(path string, params map[string]string) ([]byte, error) {
-	if c.cookies == "" {
+	cookies, uid := c.sess.get()
+	if cookies == "" {
 		return nil, fmt.Errorf("未登录，请先运行: tzzb login")
 	}
 
 	form := url.Values{}
 	form.Set("terminal", "1")
 	form.Set("version", "0.0.0")
-	form.Set("userid", c.uid)
-	form.Set("user_id", c.uid)
 	// 空字符串也要带上：get_money_history 等接口缺字段会直接 HTTP 400（Spring Whitelabel）。
 	for k, v := range params {
 		form.Set(k, v)
 	}
+	// 身份字段放在最后设：调用方可以覆盖 terminal/version（stockprofit、calendar
+	// 确实会传自己的值），但 userid 必须始终跟着当前登录态。否则自动续期换了 Cookie
+	// 之后，调用方在构造参数时读到的旧 uid 会把新 uid 覆盖掉，请求直接变成 403。
+	form.Set("userid", uid)
+	form.Set("user_id", uid)
 
 	ctx := c.ctx
 	if ctx == nil {
@@ -207,7 +304,7 @@ func (c *Client) post(path string, params map[string]string) ([]byte, error) {
 	req.Header.Set("origin", Origin)
 	req.Header.Set("referer", Referer)
 	req.Header.Set("user-agent", UA)
-	req.Header.Set("cookie", c.cookies)
+	req.Header.Set("cookie", cookies)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -220,8 +317,13 @@ func (c *Client) post(path string, params map[string]string) ([]byte, error) {
 		return nil, err
 	}
 
-	if resp.StatusCode == 403 {
-		return nil, fmt.Errorf("被服务器拒绝(403)，Cookie 可能已过期，请重新运行 tzzb login")
+	// 401 是登录态真的失效；403 更常见的是 WAF 拦了请求（见 docs/API.md 1.2）。
+	// 两者都按"可能过期"上报，由上层"能否取到一份不同的 Cookie"决定要不要重试。
+	switch resp.StatusCode {
+	case 401:
+		return nil, fmt.Errorf("%w：登录态已失效(401)，请重新运行 tzzb login", ErrAuthExpired)
+	case 403:
+		return nil, fmt.Errorf("%w：被服务器拒绝(403)，Cookie 可能已过期，请重新运行 tzzb login", ErrAuthExpired)
 	}
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, truncate(string(data), 200))
@@ -244,8 +346,14 @@ type envelope struct {
 }
 
 // call 发请求并剥掉外层信封，返回 ex_data 原始 JSON。
+//
+// 遇到登录态失效时先尝试自动续期，续期成功才重试一次——重试条件里包含
+// "新 Cookie 必须与当前不同"，所以 WAF 拦出来的 403 不会造成无意义的重试。
 func (c *Client) call(path string, params map[string]string) (json.RawMessage, error) {
 	raw, err := c.post(path, params)
+	if err != nil && errors.Is(err, ErrAuthExpired) && c.tryRefresh() {
+		raw, err = c.post(path, params)
+	}
 	if err != nil {
 		return nil, err
 	}

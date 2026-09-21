@@ -8,11 +8,7 @@ import (
 )
 
 func TestClientWithContextCancelsRequest(t *testing.T) {
-	client := &Client{
-		httpClient: &http.Client{},
-		cookies:    "userid=test",
-		uid:        "test",
-	}
+	client := NewClientWithHTTPClient(&http.Client{}, "userid=test")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 

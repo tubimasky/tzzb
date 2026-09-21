@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/liyanran/tzzb-cli/internal/browsercookie"
 	"github.com/liyanran/tzzb-cli/internal/formatter"
 	"github.com/liyanran/tzzb-cli/pkg/api"
 	"github.com/spf13/cobra"
@@ -29,6 +30,15 @@ func Execute() {
 
 func init() {
 	apiClient = api.NewClient()
+	// 登录态失效时自动重新从浏览器读取。读不到就返回错误，由 pkg/api 决定不重试。
+	// serve 与所有命令共用这一个客户端，因此常驻进程也能跟着续期。
+	apiClient.SetAuthRefresher(func() (string, error) {
+		result, err := browsercookie.Extract(tzzbDomain)
+		if err != nil {
+			return "", err
+		}
+		return result.Cookie, nil
+	})
 
 	// 全局 --json 标志
 	rootCmd.PersistentFlags().BoolVarP(&outputJSON, "json", "j", false, "以 JSON 格式输出")

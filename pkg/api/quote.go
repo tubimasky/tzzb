@@ -79,9 +79,8 @@ func (c *Client) GetQuotes(refs []QuoteRef) (map[string]Quote, error) {
 			end = len(parts)
 		}
 		ex, err := c.call(epGetQuotes, map[string]string{
-			"code":   strings.Join(parts[i:end], ","),
-			"userid": c.uid,
-			"date":   "",
+			"code": strings.Join(parts[i:end], ","),
+			"date": "",
 		})
 		if err != nil {
 			return out, err

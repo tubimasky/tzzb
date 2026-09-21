@@ -33,6 +33,9 @@
 
 > 排查经验：如果收到 403 + `请求失败，请稍后重试`，先确认上面 4 点，而不是怀疑 Cookie 过期。
 > 真正的 Cookie 过期通常表现为 HTTP 200 但 `error_code != 0`，或 401。
+>
+> CLI 现在把 401/403 都当作"可能过期"处理：会自动从浏览器重新读取 Cookie 并重试一次，
+> 只有拿到与当前不同的新 Cookie 才重试（所以 WAF 拦出来的 403 不会被误判）。
 
 ### 1.3 Cookie 与 uid
 
@@ -561,7 +564,7 @@ func (c *Client) GetAssetTrend(acc Account, days int) ([]AssetTrendPoint, error)
 | `combineCalendar/dailyProfitloss` | 组合每日盈亏 | `calendar month` |
 | `combineCalendar/monthlyProfitloss` | 组合月度盈亏 | `calendar year` |
 | `stock/monthlyProfitLossMerge` | 月度股票盈亏（含收益率/大盘） | `profit month` |
-| `stock/profitlossByCodeMerge` | 区间每日盈亏 + 个股盈亏 | `profit range` |
+| `stock/profitlossByCodeMerge` | 区间每日盈亏 + 个股盈亏（个股为**整月口径**） | `profit range` |
 | `stockAnalysisSummary/position_distribution` | 持仓分布（按市值） | `analysis dist` |
 | `stockAnalysisSummary/accountPositionRate` | 账户仓位率 | `analysis rate` |
 | `stock_position/v1/merge_position_query` | 单只合并明细 | `detail` |
@@ -731,9 +734,15 @@ sz_cal=1, jy_cal=1, cw_cal=0        # 插件常量 G：市值/交易计算开，
 
 **坑 2（fund_key 口径）**：`fund_key` 是 **stock 账户 fund_key**（与 qsid/zjzh 对齐），不是基金 fundid。实测服务端主要靠 `zjzh+qsid` 匹配，fund_key 填基金 fundid 也能返回相同结果，但按插件口径带 stock fund_key 更稳妥。
 
+**坑 3（个股盈亏是整月口径）**：`profitlossCode`（个股盈亏）**不随 `startdate`/`enddate` 收窄**，只有 **`startdate` 为月初 1 号**时才返回，且内容是该月**整月**数据（忽略 `enddate`）；
+- `20260801~20260810`（合计 +10434.97）与 `20260801~20260831`（合计 +3333.19）打印出的个股表**完全相同**；
+- `20260815~20260831`、`20260907~20260911` 等**非月初起点返回空 codes**。
+- 官方插件同样按整月调用（`startdate = new Date(y, m, 1)`，`enddate = 月末/今天`），并把 `profitlossCode` 缓存挂到**月** key 上。
+所以 CLI 的表标题/flag 文案是「个股盈亏（整月口径）」，`profit range` 在起始日非月初时不渲染该表并给出提示。
+
 响应 `ex_data`：`totalProfit` / `totalProfitRate`（收益率，小数）/ `totalSz`（同期大盘涨跌，小数）+ `profitlossList[{date, profitloss, profitloss_rate, sz}]` + `profitlossCode[{code,name,profitloss,type}]`。
 
-**已验证：`totalProfit`/`totalProfitRate`/`totalSz` 均随 startdate/enddate 收窄而变化**（三个区间实测各不同），且 `totalProfit` 与 profitlossList 逐日累加精确相等。区间合计直接用接口的这三个字段即可，无需手工累加。
+**已验证：`totalProfit`/`totalProfitRate`/`totalSz` 均随 startdate/enddate 收窄而变化**（三个区间实测各不同），且 `totalProfit` 与 profitlossList 逐日累加精确相等。区间合计直接用接口的这三个字段即可，无需手工累加。（注意 `profitlossCode` 例外，见坑 3。）
 
 #### 梯队 B — `stockAnalysisSummary/{position_distribution,accountPositionRate}`
 
@@ -1290,7 +1299,7 @@ main.go                 入口，调 cmd.Execute()
 go.mod
 pkg/api/client.go       API 客户端（认证、请求、解析、数据模型）——核心
 cmd/root.go             根命令，注册子命令，初始化 apiClient
-cmd/login.go            login：三种方式传 Cookie
+cmd/login.go            login：默认自动从浏览器读 Cookie，也支持 --cookie/--file/管道
 cmd/account.go          account list：账户列表 + 汇总，含 colorNum 工具
 cmd/position.go         position list：持仓明细，含 colorPct 工具
 cmd/trade.go            trade list / trade summary；解析见 §3.6.1
@@ -1378,10 +1387,12 @@ post(path, params)           拼公共参数 → 表单编码 → 加 4 个必�
 ## 5. 命令一览
 
 ```bash
-# 登录（Cookie 很长，终端交互式粘贴会因单行长度限制卡住，用下面三种之一）
-pbpaste | tzzb login                 # 从剪贴板管道输入（推荐）
-tzzb login --file cookie.txt         # 从文件读
-tzzb login --cookie "userid=...; ..."# 直接参数传
+# 登录（默认自动从本机浏览器读取登录态，无需手工复制）
+tzzb login                           # 自动读取，推荐
+tzzb login --browser chrome          # 只读指定浏览器
+tzzb login --file cookie.txt         # 手工：从文件读
+tzzb login --cookie "userid=...; ..."# 手工：直接参数传
+pbpaste | tzzb login                 # 手工：从剪贴板管道输入
 
 # 查看
 tzzb account list                    # 账户列表 + 汇总
@@ -1421,7 +1432,11 @@ make trend                           # = tzzb trend show
 make install                         # 安装到 ~/go/bin/tzzb
 ```
 
-> `login` 卡住的根因：macOS 终端规范模式下单行输入约 1024 字节上限，Cookie 远超此值。
+> 自动读取的实现见 `internal/browsercookie/`：钥匙串取 "Chrome Safe Storage" 口令
+> → PBKDF2-SHA1(saltysalt, 1003 轮) → AES-128-CBC 解密 cookie 值。只支持 Chromium
+> 系浏览器；非 macOS 平台是桩实现，会明确报错。
+>
+> 手工 `login` 卡住的根因：macOS 终端规范模式下单行输入约 1024 字节上限，Cookie 远超此值。
 > 用管道/文件绕开，不要走交互式输入。
 
 ---

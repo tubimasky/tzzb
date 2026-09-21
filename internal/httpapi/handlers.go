@@ -177,3 +177,120 @@ func (s *Server) handlePositions(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, resp)
 }
+
+// --- 合并持仓（跨账户按代码汇总） ---
+
+type mergedPositionDTO struct {
+	Code       string   `json:"code"`
+	Name       string   `json:"name"`
+	Count      float64  `json:"count"`
+	Cost       float64  `json:"cost"`
+	Price      float64  `json:"price"`
+	Value      float64  `json:"value"`
+	HoldProfit float64  `json:"hold_profit"`
+	HoldRate   float64  `json:"hold_rate"`
+	DayProfit  float64  `json:"day_profit"`
+	DayRate    float64  `json:"day_rate"`
+	Accounts   []string `json:"accounts"`
+}
+
+type mergedPositionsResp struct {
+	Positions []mergedPositionDTO `json:"positions"`
+	Summary   struct {
+		Value      float64 `json:"value"`
+		HoldProfit float64 `json:"hold_profit"`
+		DayProfit  float64 `json:"day_profit"`
+		Count      int     `json:"count"`
+	} `json:"summary"`
+}
+
+// handleMergedPositions GET /api/positions/merged?type= — 跨账户合并持仓
+func (s *Server) handleMergedPositions(w http.ResponseWriter, r *http.Request) {
+	typeFilter := r.URL.Query().Get("type")
+	if typeFilter == "" {
+		typeFilter = "all"
+	}
+
+	calc := service.NewCalculator()
+	positionSvc := service.NewPositionService(s.client.WithContext(r.Context()), calc)
+
+	accounts, err := positionSvc.LoadAccounts()
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+
+	rows := positionSvc.CollectRows(accounts, "", typeFilter)
+	if len(rows) == 0 {
+		writeJSON(w, mergedPositionsResp{
+			Positions: []mergedPositionDTO{},
+			Summary: struct {
+				Value      float64 `json:"value"`
+				HoldProfit float64 `json:"hold_profit"`
+				DayProfit  float64 `json:"day_profit"`
+				Count      int     `json:"count"`
+			}{},
+		})
+		return
+	}
+
+	merged := positionSvc.MergeByCode(rows)
+	ctx := positionSvc.LoadLiveContext(accounts, rows)
+
+	var items []mergedPositionDTO
+	var totalValue, totalHoldProfit, totalDayProfit float64
+
+	for _, m := range merged {
+		// 查找该代码的实时行情
+		quote, hasQuote := ctx.Quotes[m.Code]
+		var price, dayProfit, dayRate float64
+		var dayOK bool
+
+		if hasQuote {
+			price = quote.Price
+			dayProfit = (quote.Price - quote.PrevClose) * m.Count
+			if quote.PrevClose > 0 {
+				dayRate = (quote.Price - quote.PrevClose) / quote.PrevClose * 100
+			}
+			dayOK = true
+		} else {
+			price = m.Price
+		}
+
+		value := price * m.Count
+		holdRate := 0.0
+		if m.Count > 0 && m.Cost > 0 {
+			holdRate = (price - m.Cost) / m.Cost * 100
+		}
+
+		item := mergedPositionDTO{
+			Code:       m.Code,
+			Name:       m.Name,
+			Count:      m.Count,
+			Cost:       m.Cost,
+			Price:      price,
+			Value:      value,
+			HoldProfit: m.HoldProfit,
+			HoldRate:   holdRate,
+			DayProfit:  dayProfit,
+			DayRate:    dayRate,
+			Accounts:   m.Accounts,
+		}
+
+		items = append(items, item)
+		totalValue += value
+		totalHoldProfit += m.HoldProfit
+		if dayOK {
+			totalDayProfit += dayProfit
+		}
+	}
+
+	var resp mergedPositionsResp
+	resp.Positions = items
+	resp.Summary.Value = totalValue
+	resp.Summary.HoldProfit = totalHoldProfit
+	resp.Summary.DayProfit = totalDayProfit
+	resp.Summary.Count = len(items)
+
+	writeJSON(w, resp)
+}

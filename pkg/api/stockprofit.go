@@ -9,10 +9,14 @@ import (
 // 股票时间维度盈亏（梯队 A）。与 combineCalendar 同源账户口径，但多返回
 // profitloss_rate（账户收益率）与 sz（同期大盘涨跌），可做大盘对比。
 //
-// 两个坑（抓包验证）：
+// 三个坑（抓包验证）：
 //  1. startdate/enddate 用 YYYYMMDD 无横杠；带横杠会返回 -2 服务器繁忙。
 //  2. fund_key 用 stock 账户 fund_key（与 qsid/zjzh 对齐），不是基金 fundid。
 //     服务端主要靠 zjzh+qsid 匹配，fund_key 冗余，但按插件口径带上更稳妥。
+//  3. profitlossCode（个股盈亏）是「整月」口径，不随 startdate/enddate 收窄：
+//     startdate 为月初 1 号时才返回该月个股盈亏，且忽略 enddate；起始日为
+//     月中则返回空。dailyProfitloss 序列与 totalProfit 才是真正的区间口径。
+//     （官方插件同样按整月调用，并把 profitlossCode 缓存到「月」维度。）
 
 // StockPLPoint 是股票盈亏的单个时间点（某月或某日）。
 type StockPLPoint struct {
@@ -24,11 +28,11 @@ type StockPLPoint struct {
 
 // StockPLResult 是一次股票盈亏查询的结果。
 type StockPLResult struct {
-	Points     []StockPLPoint   // 按时间的盈亏序列
-	Codes      []CalendarCodePL // 区间内个股盈亏
-	TotalPL    float64          // 区间合计盈亏
-	TotalRate  float64          // 区间合计收益率（小数）
-	TotalSZ    float64          // 区间大盘涨跌（小数）
+	Points    []StockPLPoint   // 按时间的盈亏序列（区间口径）
+	Codes     []CalendarCodePL // 个股盈亏（整月口径：startdate 为月初时返回该月，否则为空）
+	TotalPL   float64          // 区间合计盈亏
+	TotalRate float64          // 区间合计收益率（小数）
+	TotalSZ   float64          // 区间大盘涨跌（小数）
 }
 
 // stockPLExData 是 monthlyProfitLoss / profitlossByCode 的 ex_data 结构。
@@ -37,10 +41,10 @@ type stockPLExData struct {
 	TotalProfitRate Num `json:"totalProfitRate"`
 	TotalSZ         Num `json:"totalSz"`
 	ProfitlossList  []struct {
-		Date          string `json:"date"`
-		Profitloss    Num    `json:"profitloss"`
-		ProfitlossRate Num   `json:"profitloss_rate"`
-		SZ            Num    `json:"sz"`
+		Date           string `json:"date"`
+		Profitloss     Num    `json:"profitloss"`
+		ProfitlossRate Num    `json:"profitloss_rate"`
+		SZ             Num    `json:"sz"`
 	} `json:"profitlossList"`
 	ProfitlossCode []struct {
 		Code       string `json:"code"`
@@ -84,8 +88,8 @@ func (c *Client) GetStockMonthlyPL(p CalendarParams, year string) (*StockPLResul
 	return c.callStockPL(epStockMonthlyPL, params)
 }
 
-// GetStockRangePL 拉取某区间每日股票盈亏 + 区间内个股盈亏。
-// start/end 格式 YYYYMMDD（无横杠）。
+// GetStockRangePL 拉取某区间每日股票盈亏（区间口径）+ 个股盈亏（整月口径）。
+// start/end 格式 YYYYMMDD（无横杠）。注意 Codes 只在 start 为月初时返回，且为该月整月数据。
 func (c *Client) GetStockRangePL(p CalendarParams, start, end string) (*StockPLResult, error) {
 	if len(start) != 8 || len(end) != 8 {
 		return nil, fmt.Errorf("日期格式应为 YYYYMMDD，得到: %s~%s", start, end)

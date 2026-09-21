@@ -205,26 +205,23 @@ func (s *PositionService) RecomputeMerged(m MergedPosition, ctx *LiveContext) ap
 
 // MergeByCode 跨账户按代码合并持仓
 func (s *PositionService) MergeByCode(rows []PositionRow) []MergedPosition {
-	type key struct{ code, name string }
-	grouped := map[key]*MergedPosition{}
-	var order []key
+	grouped := map[string]*MergedPosition{}
+	var order []string
 
 	for _, r := range rows {
 		code := normalizeCode(r.Position.Code)
 		if code == "" {
 			code = r.Position.Code
 		}
-		name := r.Position.Name
-		k := key{code, name}
-		if grouped[k] == nil {
-			order = append(order, k)
-			grouped[k] = &MergedPosition{
+		if grouped[code] == nil {
+			order = append(order, code)
+			grouped[code] = &MergedPosition{
 				Code:     code,
-				Name:     name,
+				Name:     r.Position.Name, // 使用第一个出现的名字
 				Accounts: []string{},
 			}
 		}
-		m := grouped[k]
+		m := grouped[code]
 		m.Count += r.Position.Count.F()
 		m.Cost += r.Position.Cost.F() * r.Position.Count.F()
 		m.Value += r.Position.Value.F()
@@ -244,8 +241,8 @@ func (s *PositionService) MergeByCode(rows []PositionRow) []MergedPosition {
 	}
 
 	var out []MergedPosition
-	for _, k := range order {
-		m := grouped[k]
+	for _, code := range order {
+		m := grouped[code]
 		if m.Count > 0 {
 			m.Cost /= m.Count
 		}

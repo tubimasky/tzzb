@@ -48,14 +48,14 @@ var profitSummaryCmd = &cobra.Command{
 		// JSON 输出
 		if outputJSON {
 			type ProfitJSON struct {
-				Account      string  `json:"account"`
-				Category     string  `json:"category"`
-				Principal    float64 `json:"principal"`
-				TotalAssets  float64 `json:"total_assets"`
-				HoldProfit   float64 `json:"hold_profit"`
-				TodayProfit  float64 `json:"today_profit"`
-				TotalProfit  float64 `json:"total_profit"`
-				TotalRate    float64 `json:"total_rate"`
+				Account     string  `json:"account"`
+				Category    string  `json:"category"`
+				Principal   float64 `json:"principal"`
+				TotalAssets float64 `json:"total_assets"`
+				HoldProfit  float64 `json:"hold_profit"`
+				TodayProfit float64 `json:"today_profit"`
+				TotalProfit float64 `json:"total_profit"`
+				TotalRate   float64 `json:"total_rate"`
 			}
 			var result []ProfitJSON
 
@@ -157,15 +157,15 @@ var profitMonthCmd = &cobra.Command{
 		formatter.RenderTable(headers, rows, formatter.WithBorder(true))
 		printStockPLSummary(res)
 		if profitTop != 0 {
-			renderStockTopCodes(svc, res)
+			renderStockTopCodes(svc, res, fmt.Sprintf("年度个股盈亏 Top %d", profitTop))
 		}
 	},
 }
 
 var profitRangeCmd = &cobra.Command{
 	Use:   "range",
-	Short: "区间盈亏（某段时间每日股票盈亏 + 个股盈亏）",
-	Long:  `按日展示某区间股票盈亏，并汇总区间内各标的盈亏。日期格式 YYYYMMDD，默认本月初到今天。`,
+	Short: "区间盈亏（每日股票盈亏；个股盈亏为整月口径）",
+	Long:  `按日展示某区间股票盈亏（区间口径），并附起始月整月口径的个股盈亏 Top N。日期格式 YYYYMMDD，默认本月初到今天。`,
 	Run: func(cmd *cobra.Command, args []string) {
 		svc := getStockProfitService()
 		res, start, end, err := svc.LoadRange(profitAccount, profitStart, profitEnd)
@@ -192,7 +192,12 @@ var profitRangeCmd = &cobra.Command{
 		formatter.RenderTable(headers, rows, formatter.WithBorder(true))
 		printStockPLSummary(res)
 		if profitTop != 0 {
-			renderStockTopCodes(svc, res)
+			if len(res.Codes) == 0 {
+				fmt.Printf("\n提示：个股盈亏为整月口径，仅当起始日为月初时返回；把起始日设为 %s 可查看该月个股盈亏。\n",
+					service.FormatDay(start[:6]+"01"))
+			} else {
+				renderStockTopCodes(svc, res, fmt.Sprintf("个股盈亏 Top %d（起始月整月口径）", profitTop))
+			}
 		}
 	},
 }
@@ -207,7 +212,7 @@ func printStockPLSummary(res *api.StockPLResult) {
 	)
 }
 
-func renderStockTopCodes(svc *service.StockProfitService, res *api.StockPLResult) {
+func renderStockTopCodes(svc *service.StockProfitService, res *api.StockPLResult, title string) {
 	codes := svc.TopCodes(res, profitTop)
 	var rows []formatter.CodePLRow
 	for _, c := range codes {
@@ -218,7 +223,7 @@ func renderStockTopCodes(svc *service.StockProfitService, res *api.StockPLResult
 			Type:       c.Type,
 		})
 	}
-	formatter.RenderCodePL(fmt.Sprintf("区间个股盈亏 Top %d", profitTop), rows)
+	formatter.RenderCodePL(title, rows)
 }
 
 func printStockPLJSON(res *api.StockPLResult) {
@@ -238,10 +243,10 @@ func init() {
 
 	profitMonthCmd.Flags().StringVarP(&profitAccount, "account", "a", "", "按账户名过滤（模糊匹配），默认全部账户汇总")
 	profitMonthCmd.Flags().StringVarP(&profitYear, "year", "y", "", "年份 YYYY，默认当前年")
-	profitMonthCmd.Flags().IntVarP(&profitTop, "top", "t", 10, "显示区间个股盈亏 Top N，0 表示不显示")
+	profitMonthCmd.Flags().IntVarP(&profitTop, "top", "t", 10, "显示年度个股盈亏 Top N，0 表示不显示")
 
 	profitRangeCmd.Flags().StringVarP(&profitAccount, "account", "a", "", "按账户名过滤（模糊匹配），默认全部账户汇总")
 	profitRangeCmd.Flags().StringVarP(&profitStart, "start", "s", "", "起始日期 YYYYMMDD，默认本月初")
 	profitRangeCmd.Flags().StringVarP(&profitEnd, "end", "e", "", "结束日期 YYYYMMDD，默认今天")
-	profitRangeCmd.Flags().IntVarP(&profitTop, "top", "t", 10, "显示区间个股盈亏 Top N，0 表示不显示")
+	profitRangeCmd.Flags().IntVarP(&profitTop, "top", "t", 10, "显示起始月个股盈亏 Top N（整月口径），0 表示不显示")
 }

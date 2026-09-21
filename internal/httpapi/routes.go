@@ -4,6 +4,7 @@ package httpapi
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/accounts", s.handleAccounts)
 	s.mux.HandleFunc("GET /api/positions", s.handlePositions)
+	s.mux.HandleFunc("GET /api/positions/merged", s.handleMergedPositions)
 	s.mux.HandleFunc("GET /api/calendar/month", s.handleCalendarMonth)
 	s.mux.HandleFunc("GET /api/calendar/year", s.handleCalendarYear)
 	s.mux.HandleFunc("GET /api/stockprofit/monthly", s.handleStockProfitMonthly)

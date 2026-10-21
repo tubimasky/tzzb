@@ -18,6 +18,9 @@ var (
 	apiClient  *api.Client
 	outputJSON bool // 全局 JSON 输出标志
 	noColor    bool // 全局禁用颜色标志
+	// hexinToken 生成 hexin-v 反爬 token，供直接请求与登录页共用；
+	// 为 nil 表示已禁用（TZZB_NO_HEXIN=1）。
+	hexinToken func() (string, error)
 	rootCmd    = &cobra.Command{
 		Use:   "tzzb",
 		Short: "投资账本命令行工具",
@@ -53,7 +56,7 @@ func init() {
 			hexinMu  sync.Mutex
 			hexinGen *hexinv.Generator
 		)
-		apiClient.SetHexinProvider(func() (string, error) {
+		hexinToken = func() (string, error) {
 			hexinMu.Lock()
 			defer hexinMu.Unlock()
 			if hexinGen == nil {
@@ -65,7 +68,8 @@ func init() {
 				hexinGen = g
 			}
 			return hexinGen.Token()
-		})
+		}
+		apiClient.SetHexinProvider(hexinToken)
 	}
 
 	// 全局 --json 标志

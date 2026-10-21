@@ -19,6 +19,23 @@ make run ARGS="account list"
 
 ### 1. 登录（配置 Cookie）
 
+**方式一（推荐，完全不需要浏览器）：同花顺投资账本 APP 扫码**
+
+```bash
+tzzb login --qr
+```
+
+终端里会直接画出二维码（按终端宽高自适应；终端太矮时自动改用看图程序打开
+`~/.tzzb/qrcode.png`），手机打开同花顺投资账本 APP → 扫一扫 → 确认登录即可。
+二维码失效会自动刷新。全程纯 HTTP，不走图形验证码 / 滑块 / 短信。
+
+> 二维码内容是给 APP 的「扫一扫」解析 qrid 用的；用手机系统相机或浏览器直接打开
+> 那个 URL 会跳首页，属正常现象。扫码链路与官方登录页 `qrcode.js` 一致
+> （`/scan/creatCode` → `/scan/creatImg` → `/scan/getInfoNew`），
+> `TZZB_QR_SOURCE` 可覆盖二维码 URL 形态（默认 `tzzb_web`）。
+
+**方式二：浏览器 Cookie（自动读取）**
+
 工具用浏览器登录态的 Cookie 认证。**默认自动从本机浏览器读取，不需要手工复制**：
 
 ```bash

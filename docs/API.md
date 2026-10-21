@@ -87,6 +87,38 @@ user_id=<uid>
 
 ---
 
+### 1.6 扫码登录（同花顺 APP 扫码，纯 HTTP）
+
+比短信更稳的通道：不走图形验证码、不走滑块、不发短信，用户用同花顺投资账本 APP
+（或同花顺 APP）扫码确认即可。实测 2026-10-22 可用。
+
+| 步骤 | 请求 | 说明 |
+| --- | --- | --- |
+| 1 | `GET /scan/creatCode` | 返回 `{"qrid":"usk_..."}` |
+| 2 | `GET /scan/creatImg?qrid=<qrid>&source=tzzb_web` | 返回 252×252 PNG 二维码（41×41 模块，每模块 6px） |
+| 3 | `POST /scan/getInfoNew` | 表单 `qrid`、`state=1`、`source=pc_web`、`page_source=web_screen`、`request_type=login` |
+
+轮询返回 `status`：
+
+| status | 含义 |
+| --- | --- |
+| `0` | 二维码失效，需重新 `creatCode` / `creatImg` |
+| `1` | 等待扫码 |
+| `2` | 已扫码，等待手机上确认 |
+| `3` | 确认成功，会话已登录（响应同时下发登录态 Cookie） |
+
+要点：
+
+- `creatImg` 的 `source` 用页面场景代号（tzzb 是 `tzzb_web`），与二维码里编码的
+  `qrlogin?source=...` 一致；
+- 轮询响应里的 `expired=1` 在**正常等待时**也会出现，判断失效只能看 `status=0`；
+- 二维码是 41×41 模块：终端里用"1 模块 = 1 字符宽 × 2 模块高"的半方块渲染，
+  实测可被手机识别；终端放不下时不要缩放（会丢模块），应改用图片窗口；
+- 二维码内容由 `source` 决定：`tzzb_web`（默认）→ `https://tzzb.10jqka.com.cn/qrlogin?source=tzzb_web&qrid=...`；
+  `pc_web`/`web_screen`/空 → `http://mobile.10jqka.com.cn/?source=PC&qrid=...`。两种 qrid 状态机相同，
+  都需用同花顺投资账本 APP 的「扫一扫」解析（用系统相机/浏览器打开会跳首页）；
+- `TZZB_QR_SOURCE` 可覆盖 `source`（排查 APP 扫码兼容性用）。
+
 ## 2. 统一响应结构
 
 所有接口返回同一个外层信封（envelope）：

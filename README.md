@@ -121,11 +121,35 @@ tzzb export position -f json
 | `export account` | 导出账户 | `-f/--format` csv/json、`-o/--output` |
 | `export position` | 导出持仓 | `-f/--format` csv/json、`-o/--output` |
 
+## 反爬（`hexin-v`）
+
+接口要求每个请求带 `hexin-v` 头（值等于 Cookie 里的 `v`），它由页面上的
+`chameleon.min.<ver>.js` 生成。2026-10-22 实测定位到规则：
+
+| 发法 | 结果 |
+| --- | --- |
+| 不带 `hexin-v` | 200，但拿到的是**空模板数据** |
+| 固定一个 `hexin-v` 反复用 | 前 8~10 个 200，之后全部 `<h1>Nginx forbidden.</h1>` |
+| **每请求换一个新 `hexin-v`** | **零延迟连发几十个全部 200** |
+
+所以 403 既不是 IP 封禁，也不是频率限流，而是 **token 复用超限**。
+
+`internal/hexinv` 把官方 chameleon 脚本内置进二进制，用纯 Go 的 JS 引擎
+[goja](https://github.com/dop251/goja) + 最小 DOM 垫片跑起来，**每请求现算一个新 token**：
+
+- 不需要 Chromium、不需要 Node、不需要额外进程；
+- 初始化约 30ms，之后每个 token 微秒级；
+- 脚本版本约 `Unix秒/1000`（每 ~17 分钟滚动），缓存 30 分钟，失败自动退回内置副本，
+  完全离线也能工作。
+
+相关环境变量：`TZZB_NO_HEXIN=1`（关闭自动生成）、`TZZB_CHAMELEON_JS=<path>`
+（指定本地脚本）、`TZZB_REQUEST_INTERVAL_MS=<n>`（请求间隔，默认 100ms）。
+
 ## 已知限制
 
 - **本金/总收益率**：持仓接口不返回本金，`profit summary` 的本金列和总收益率会显示 0。总盈亏用持仓盈亏近似（不含已清仓的历史收益）。详见 `docs/API.md`。
 - **重复持仓行**：某些账户后端会返回完全相同的重复持仓行。经核对，后端顶层市值口径**包含**这些重复行，故工具不去重，以与网页端数值一致。
-- **Cookie 过期**：过期后接口返回 403，重新 `tzzb login` 即可。
+- **Cookie 过期**：过期后接口返回 403（与反爬拦截页长得一样），重新 `tzzb login` 即可。
 
 ## 依赖
 

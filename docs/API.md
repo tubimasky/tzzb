@@ -22,7 +22,7 @@
 - 插件里还出现过测试环境 `pretestcapital.hexin.cn`、`//172.21.52.127`，**不要用**，那是内网/测试地址。
 - 前端拼接逻辑（插件 JS 反混淆后）：`buildForwardUrl(t) => this.server + "/caishen_httpserver/tzzb" + t`，`this.server = "//tzzb.10jqka.com.cn"`。
 
-### 1.2 绕过 403 的四个必要条件
+### 1.2 绕过 403 的必要条件
 
 直接用 Cookie 发 GET 会被 CDN 层（openresty/squid）拦掉，返回 `HTTP 403` + 文本 `请求失败，请稍后重试`。请求根本到不了后端。绕过它必须**同时满足**：
 
@@ -30,12 +30,39 @@
 2. **body 是表单编码** `application/x-www-form-urlencoded`，不是 JSON。
 3. **带 `origin` 和 `referer` 头**（值见上表）。这是 WAF 校验的核心，缺一个就 403。
 4. **带完整 Cookie 头**。
+5. **带 `hexin-v` 头，且每个请求都要换一个新值**。这是 2026-10-22 才定位到的
+   **最关键的第五条**，详见 §1.5。
 
 > 排查经验：如果收到 403 + `请求失败，请稍后重试`，先确认上面 4 点，而不是怀疑 Cookie 过期。
 > 真正的 Cookie 过期通常表现为 HTTP 200 但 `error_code != 0`，或 401。
 >
 > CLI 现在把 401/403 都当作"可能过期"处理：会自动从浏览器重新读取 Cookie 并重试一次，
 > 只有拿到与当前不同的新 Cookie 才重试（所以 WAF 拦出来的 403 不会被误判）。
+
+### 1.5 hexin-v 反爬 token（403 的真正主因）
+
+页面上的 `chameleon.min.<ver>.js` 会给每个 XHR 注入 `hexin-v` 头，值等于 Cookie 里的
+`v`。实测结论（2026-10-22，同一台机器/同一出口 IP/同一 Cookie）：
+
+| 发法 | 结果 |
+| --- | --- |
+| 不带 `hexin-v` | 200（能过，但拿到的是空模板数据） |
+| 固定一个 `hexin-v` 复用 | 前 8~10 个 200，之后全部 `<h1>Nginx forbidden.</h1>` |
+| **每请求换一个新 `hexin-v`** | **零延迟连发几十个全部 200** |
+
+所以 403 的成因既不是 IP 封禁，也不是频率限流，而是 **token 复用超限**。浏览器里看起来
+"永不封"，只是因为 chameleon 每发一个请求就重新生成一次 token。
+
+token 形态：60 字符 URL-safe base64，以 `A` 开头，编码了时间等信息。生成它需要跑
+chameleon 脚本（混淆过的），本仓库的做法见 `internal/hexinv`：
+
+- 用 `go:embed` 内置一份 chameleon 脚本；
+- 用纯 Go 的 JS 引擎 [goja](https://github.com/dop251/goja) + 最小 DOM 垫片把它跑起来；
+- 每次要 token 时触发一次 `XMLHttpRequest.open`，chameleon 就会把新 `v` 写回
+  `document.cookie`，取出来即可。
+
+不需要 Chromium，也不需要 Node。脚本可以自动跟进版本：版本号约为 `Unix秒/1000`
+（每 ~17 分钟滚动），旧版本 CDN 仍可访问，见 `hexinv.ScriptURLTemplate`。
 
 ### 1.3 Cookie 与 uid
 
@@ -54,6 +81,9 @@ version=0.0.0
 userid=<uid>
 user_id=<uid>
 ```
+
+另外每个请求还会自动带一个**全新生成**的 `hexin-v` 头（见 §1.5），由
+`internal/hexinv` 负责，业务代码无需关心。
 
 ---
 

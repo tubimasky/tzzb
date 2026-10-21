@@ -134,6 +134,9 @@ type Client struct {
 	ctx        context.Context
 	sess       *session
 	auth       *authState
+	// hexin 非空时为每个请求生成一个新的 hexin-v 反爬 token。
+	// 启动时设置一次，之后只读，因此不加锁。
+	hexin func() (string, error)
 }
 
 // WithContext 返回绑定请求上下文的浅拷贝，可安全用于并发 HTTP handler。
@@ -143,6 +146,14 @@ func (c *Client) WithContext(ctx context.Context) *Client {
 	clone.ctx = ctx
 	return &clone
 }
+
+// SetHexinProvider 设置 hexin-v token 生成器。
+//
+// 同花顺要求每个请求带 hexin-v 头（值等于 Cookie 里的 v），且**每个请求都要
+// 换一个新的**：同一个 token 复用约 8~10 次后，后续请求一律返回
+// <h1>Nginx forbidden.</h1>。所以这里每次请求前都现取一个 token。
+// 传 nil 可以关闭（退回不带反爬头的请求）。
+func (c *Client) SetHexinProvider(f func() (string, error)) { c.hexin = f }
 
 // uid 返回当前登录态里的用户 id。
 func (c *Client) uid() string {
@@ -305,6 +316,14 @@ func (c *Client) post(path string, params map[string]string) ([]byte, error) {
 	req.Header.Set("referer", Referer)
 	req.Header.Set("user-agent", UA)
 	req.Header.Set("cookie", cookies)
+
+	if c.hexin != nil {
+		tok, err := c.hexin()
+		if err != nil {
+			return nil, fmt.Errorf("生成 hexin-v 反爬 token 失败: %w", err)
+		}
+		req.Header.Set("hexin-v", tok)
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

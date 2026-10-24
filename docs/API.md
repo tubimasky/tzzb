@@ -845,6 +845,28 @@ manualid, fundkey, rzrq_fundkey, stock_code, stock_account, from_pc=1
 
 **验证**：实测 `merge` 的 `market_value` = `count × price_curr`（5000×0.941=4705），`trans_amount` 与 `trans_count×trans_price` 一致；未清仓股 `clear_position_query` 返回全 0，`total_position_query` 给出建仓日。
 
+### 3.13 init / status — 触发服务端重新计算（已接入，零浏览器）
+
+对应命令 `tzzb refresh`。服务端汇总值（持仓/现金/总资产）**不是实时计算的**：手机投资账本 APP 上传新数据后，服务端需要执行一次 `init` 才会重算，否则 `account_list`/`stock_card` 里的汇总值可能长时间是旧的（例如清仓后仍显示旧持仓、当日成交后现金不变）。
+
+PC 网页加载时的真实流程（见 `pc/index.*.js` 的 `triggerStockServerCal` / `pollStockServerCal`）：
+
+```
+account_list（取账户 ID）→ init（触发重算，响应 {}）→ 每 500ms 轮询 status
+→ 全部 status=0 → 再读取持仓/资产接口
+```
+
+| path | 语义 | 参数 | 响应要点 |
+|---|---|---|---|
+| `pc/account/v1/init` | 触发服务端重算 | `manual_id` / `fund_key` / `rzrq_fund_key` | 纯动作，返回 `{}` |
+| `pc/account/v1/status` | 查询计算状态 | 同上 | `{"data":[{"manual_id"|"fund_key", "status"}]}` |
+
+- 账户坐标与 `account_list` 对应：手工账户传 `manual_id`（它的 `fund_key` 就是自身数字 id，**不要**混入 `fund_key` 列表）、普通账户传 `fund_key`、两融传 `rzrq_fund_key`；基金账户是另一套 `init_fund`/`status_fund`。
+- `status`：`-1` 失败 / `0` 完成 / `1` 计算中。全部非 `1` 即结束（计算通常几百毫秒，多数情况第一次轮询就是 `0`）。
+- **注意设计约束**：同花顺要求「手机端触发一次同步/上传」，这一步 CLI/网页都无法代替；`init` 只负责让服务端把**已上传**的数据算进汇总值。所以完整流程是：手机 APP 同步一次 → `tzzb refresh` → 再查询。
+
+**验证**：2026-10-22 手机同步后 49 秒读到的汇总值仍是旧的，直连 `init` 后 5 秒内刷新（现金变化量 = 逆回购利息级别）；同期页面加载也仅做同样动作。
+
 ### 3.9 全量原始清单（附录，共 227 条，一条不落）
 
 §3.8 是分类精选，此处为从插件 JS 扒到的全部 `/caishen_fund/...` 端点原样罗列（去掉 `caishen_fund/` 前缀，按一级模块字母序分组），保证完整无遗漏。调用前均需拼公共前缀 `/caishen_httpserver/tzzb`（见 §1.1）。
@@ -1457,6 +1479,7 @@ tzzb login --cookie "userid=...; ..."# 手工：直接参数传
 pbpaste | tzzb login                 # 手工：从剪贴板管道输入
 
 # 查看
+tzzb refresh                         # 触发服务端重算（等价于打开一次 PC 网页，零浏览器）
 tzzb account list                    # 账户列表 + 汇总
 tzzb position list                   # 全部持仓
 tzzb position list -a 华宝           # 按账户名模糊过滤

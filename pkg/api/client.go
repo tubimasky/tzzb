@@ -23,6 +23,8 @@ const (
 	UA      = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
 	epAccountList     = "/caishen_fund/pc/account/v1/account_list"
+	epAccountInit     = "/caishen_fund/pc/account/v1/init"   // 触发服务端重新计算（网页加载时调用）
+	epAccountStatus   = "/caishen_fund/pc/account/v1/status" // 轮询服务端计算状态（init 之后每 500ms 一次）
 	epMoneyHistory    = "/caishen_fund/pc/account/v1/get_money_history"
 	epStockPosition   = "/caishen_fund/pc/asset/v1/stock_position"
 	epFundPosition    = "/caishen_fund/pc/asset/v1/fund_position"

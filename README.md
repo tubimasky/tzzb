@@ -118,6 +118,7 @@ tzzb export position -f json
 | 命令 | 说明 | 参数 |
 | --- | --- | --- |
 | `login` | 保存 Cookie | `-c/--cookie`、`-f/--file`，或管道 |
+| `refresh` | 触发服务端重算（`init`/`status`），让持仓/现金/总资产变新；等价于打开一次 PC 网页，零浏览器 | `--timeout` 等待上限（默认 30s）/ `-j` JSON |
 | `account list` | 账户列表+汇总 | 无 |
 | `position list` | 按账户持仓明细 | `-a` 账户 / `-t all\|stock\|fund` / `--flat` |
 | `position total` | 跨账户按代码汇总 | `-a` / `-t all\|stock\|fund` |
@@ -137,6 +138,10 @@ tzzb export position -f json
 | `calendar year` | 盈亏年视图（某年每月） | `-a` / `-y` 年份 / `-t` Top N |
 | `export account` | 导出账户 | `-f/--format` csv/json、`-o/--output` |
 | `export position` | 导出持仓 | `-f/--format` csv/json、`-o/--output` |
+
+> 服务端汇总值（持仓/现金/总资产）不是实时计算的：手机投资账本 APP 上传新数据后，
+> 需要触发一次 `init` 才会重算。所以**手机 APP 同步完成后，先执行 `tzzb refresh`，再查询**
+> 才能拿到最新值。手机端「同步/上传」是产品设计约束，CLI 无法代替。
 
 ## 反爬（`hexin-v`）
 

@@ -1,24 +1,34 @@
-// Package hexinv 在纯 Go 环境里生成同花顺的 hexin-v 反爬 token。
+// Package hexinv 生成/刷新同花顺的反爬 token（Cookie 的 v / hexin-v 头）。
 //
-// # 为什么需要它
+// # 背景
 //
-// 上游接口要求每个请求携带 hexin-v 请求头（值等于 Cookie 里的 v）。该 token
-// 由页面上的 chameleon 脚本生成，并且**每个请求都会换一个新的**。实测结论：
+// 上游接口要求每个请求携带一枚**新的**反爬 token，否则会被 WAF 拒绝（403，
+// 页面是 <h1>Nginx forbidden.</h1>）。实测：同一个 token 复用约 8~10 次后开始
+// 403；每请求换新 token 可以零延迟连发几十个请求全部 200 —— 关键不是 IP、
+// 频率或浏览器指纹，而是 token 不能复用。
 //
-//   - 同一个 token 复用约 8~10 次后，后续请求一律返回
-//     <h1>Nginx forbidden.</h1>（HTTP 403）；
-//   - 每次换一个全新 token，连发几十个请求全部 200；
-//   - 换成真浏览器页面内 fetch 之所以"永远不封"，不是因为它有什么特殊指纹，
-//     而是因为 chameleon 每发一个请求就重新生成一次 token。
+// 2026-10-28 抓包确认官方 PC 页面的真实行为：chameleon 脚本每个请求生成一枚
+// 新 token 并**写回 Cookie 的 v**（页面不发 hexin-v 请求头；v 是页面里执行
+// document.cookie=... 写入的）。服务端两种都接受，关键是"每请求一枚新 token"。
 //
-// 也就是说：长期稳定访问的关键是"每请求一个新 token"，跟 IP、频率、浏览器
-// 指纹都无关。所以这里把官方 chameleon 脚本嵌进二进制，用纯 Go 的 JS 引擎
-// goja 跑起来，自己生成 token —— 不需要 Chromium，也不需要 Node。
+// # 两条路径
+//
+//  1. RefreshCookie / DecodeV / EncodeV：数学刷新（推荐，主路径）。token 是
+//     60 字符 URL-safe base64、解码后 45 字节的 v3 结构，payload 里只有时间戳
+//     （[8:12] 大端秒）和计数器（[40:42] 大端 uint16）会变，其余是会话/设备
+//     模板。解码 → 改时间、计数 → 重算校验位 → 重编码即可，不用跑 JS、不用联网。
+//  2. Generator：执行官方 chameleon 脚本现算（兜底）。脚本用 go:embed 内置，
+//     用纯 Go 的 JS 引擎 goja + 最小 DOM 垫片跑起来，不依赖 Chromium / Node。
 //
 // # 用法
 //
-//	g, err := hexinv.New()
-//	tok, err := g.Token()   // 每次请求前取一个新的，放进 hexin-v 头
+//	// 主路径：刷新 Cookie 里已有的 v
+//	newCookies, tok, ok := hexinv.RefreshCookie(cookies, time.Now())
+//	if !ok {
+//		// 兜底：没有可识别的 v 时生成全新 token 并写回 Cookie
+//		tok, err = g.Token()
+//		newCookies, _ = hexinv.SetCookieV(cookies, tok)
+//	}
 //
 // 一个 Generator 内部串行工作（goja 运行时非并发安全），*Generator 可并发调用。
 package hexinv
@@ -131,7 +141,11 @@ func Load(ctx context.Context) (*Generator, error) {
 	return New()
 }
 
-// Token 生成一个新的 hexin-v token。
+// Token 执行 chameleon 脚本生成一枚全新的 token（兜底路径）。
+//
+// 主路径应优先用 RefreshCookie：从 Cookie 里已有的 v 做数学刷新即可，
+// 不用跑 JS。只有当 Cookie 里没有可识别的 v3 token（首次使用、旧格式、
+// 被改坏）时，才需要这里生成一枚全新的会话模板。
 //
 // 每调用一次内部会触发一次 XHR hook，让 chameleon 重新生成保存在
 // document.cookie 里的 v，再把新值取出来。取到后立刻清空队列，

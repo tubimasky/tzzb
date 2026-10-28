@@ -139,6 +139,15 @@ type Client struct {
 	// hexin 非空时为每个请求生成一个新的 hexin-v 反爬 token。
 	// 启动时设置一次，之后只读，因此不加锁。
 	hexin func() (string, error)
+	// vtoken 非空时优先使用它：按 Cookie 里的 v 做数学刷新（对齐官方页面行为），
+	// 返回刷新后的 Cookie 与本次请求用的 token。只有 Cookie 里的 v 不可用时，
+	// 才由提供方自行回退（例如执行 chameleon 脚本现算）。设置一次，之后只读。
+	vtoken func(cookies string) (newCookies, token string, err error)
+	// vmu 串行化 token 刷新：并发请求必须各自拿到不同的 counter，
+	// 否则会复用同一枚 token。用指针是因为 WithContext 是浅拷贝。
+	vmu *sync.Mutex
+	// retryDelay 计算 403 重试前的等待时间，nil 表示用默认值；测试可覆盖。
+	retryDelay func(attempt int) time.Duration
 }
 
 // WithContext 返回绑定请求上下文的浅拷贝，可安全用于并发 HTTP handler。
@@ -149,13 +158,30 @@ func (c *Client) WithContext(ctx context.Context) *Client {
 	return &clone
 }
 
-// SetHexinProvider 设置 hexin-v token 生成器。
+// SetHexinProvider 设置 hexin-v token 生成器（旧接口，仅生成 token、不改 Cookie）。
 //
-// 同花顺要求每个请求带 hexin-v 头（值等于 Cookie 里的 v），且**每个请求都要
-// 换一个新的**：同一个 token 复用约 8~10 次后，后续请求一律返回
-// <h1>Nginx forbidden.</h1>。所以这里每次请求前都现取一个 token。
-// 传 nil 可以关闭（退回不带反爬头的请求）。
+// 只设置 hexin 而不同时设置 vtoken 时，每次请求会重新生成一枚 token 放进
+// hexin-v 头，但 Cookie 里的 v 不会跟着刷新。官方页面实际做法是刷新 Cookie 的
+// v，所以新代码应优先使用 SetVTokenProvider。
 func (c *Client) SetHexinProvider(f func() (string, error)) { c.hexin = f }
+
+// SetVTokenProvider 设置"Cookie v 刷新 + 反爬 token"提供器。
+//
+// 提供器接收当前 Cookie，返回刷新后的 Cookie 和本次请求使用的 token。
+// 客户端会：把刷新后的 Cookie 写回内存登录态、请求头 Cookie 用新值、
+// 同时设置 hexin-v 头（与官方页面保留的兼容余量，服务端两种都接受）。
+// 这样每个请求都换一枚新 token，且不产生任何本地文件写入。
+func (c *Client) SetVTokenProvider(f func(cookies string) (newCookies, token string, err error)) {
+	c.vtoken = f
+}
+
+// defaultRetryDelay 是 403 重试的默认等待：300ms、900ms。
+func defaultRetryDelay(attempt int) time.Duration {
+	if attempt <= 0 {
+		return 300 * time.Millisecond
+	}
+	return 900 * time.Millisecond
+}
 
 // uid 返回当前登录态里的用户 id。
 func (c *Client) uid() string {
@@ -185,6 +211,8 @@ func NewClientWithHTTPClient(httpClient *http.Client, cookies string) *Client {
 		httpClient: httpClient,
 		sess:       &session{},
 		auth:       &authState{},
+		vmu:        &sync.Mutex{},
+		retryDelay: defaultRetryDelay,
 	}
 	client.sess.set(cookies)
 	return client
@@ -285,11 +313,38 @@ func (c *Client) tryRefresh() bool {
 	return true
 }
 
-// post 发起一个表单编码的 POST 请求。origin/referer 头是绕过 WAF 403 的关键。
-func (c *Client) post(path string, params map[string]string) ([]byte, error) {
+// max403Retries 是 403（WAF/反爬拒绝）时的最大重试次数。
+//
+// 403 最常见的原因是反爬 token 被拒（过期、格式不对、被复用），换一枚新 token
+// 立刻重试通常就能过；连续失败才按登录态失效上报给上层（上层会尝试从浏览器
+// 重新读取 Cookie）。参考 PM25000/dsh-ths-holdings 的有界重试策略。
+const max403Retries = 2
+
+// newRequest 构造一次请求：按需刷新反爬 token，并把它同时写进 Cookie 的 v
+// 与 hexin-v 头（官方页面只轮换 Cookie v，但服务端两种都接受，双写更稳）。
+func (c *Client) newRequest(path string, params map[string]string) (*http.Request, error) {
 	cookies, uid := c.sess.get()
 	if cookies == "" {
 		return nil, fmt.Errorf("未登录，请先运行: tzzb login")
+	}
+
+	// 主路径：数学刷新 Cookie 里的 v（不执行 JS、不联网）。刷新后写回内存
+	// 登录态，后续请求从新的 counter 继续。只有 v 不可用时才走 c.hexin 兜底。
+	var token string
+	if c.vtoken != nil {
+		c.vmu.Lock()
+		cur, _ := c.sess.get()
+		newCookies, tok, err := c.vtoken(cur)
+		if err != nil {
+			c.vmu.Unlock()
+			return nil, fmt.Errorf("生成反爬 token 失败: %w", err)
+		}
+		if newCookies != cur {
+			c.sess.set(newCookies)
+			cookies, uid = c.sess.get()
+		}
+		token = tok
+		c.vmu.Unlock()
 	}
 
 	form := url.Values{}
@@ -319,37 +374,56 @@ func (c *Client) post(path string, params map[string]string) ([]byte, error) {
 	req.Header.Set("user-agent", UA)
 	req.Header.Set("cookie", cookies)
 
-	if c.hexin != nil {
+	if c.vtoken != nil {
+		req.Header.Set("hexin-v", token)
+	} else if c.hexin != nil {
 		tok, err := c.hexin()
 		if err != nil {
 			return nil, fmt.Errorf("生成 hexin-v 反爬 token 失败: %w", err)
 		}
 		req.Header.Set("hexin-v", tok)
 	}
+	return req, nil
+}
 
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
+// post 发起一个表单编码的 POST 请求。origin/referer 头是绕过 WAF 403 的关键。
+func (c *Client) post(path string, params map[string]string) ([]byte, error) {
+	for attempt := 0; attempt <= max403Retries; attempt++ {
+		if attempt > 0 && c.retryDelay != nil {
+			time.Sleep(c.retryDelay(attempt - 1))
+		}
+		req, err := c.newRequest(path, params)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		data, readErr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if readErr != nil {
+			return nil, readErr
+		}
 
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
+		switch resp.StatusCode {
+		case 200:
+			return data, nil
+		case 401:
+			return nil, fmt.Errorf("%w：登录态已失效(401)，请重新运行 tzzb login", ErrAuthExpired)
+		case 403:
+			// 没有反爬 token 生成器时，重试只会拿到同一枚旧 token，没有意义；
+			// 保持旧行为，直接按登录态失效上报（由上层决定是否重新读 Cookie）。
+			if c.vtoken == nil && c.hexin == nil {
+				return nil, fmt.Errorf("%w：被服务器拒绝(403)，Cookie 可能已过期，请重新运行 tzzb login", ErrAuthExpired)
+			}
+			continue
+		default:
+			return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, truncate(string(data), 200))
+		}
 	}
-
-	// 401 是登录态真的失效；403 更常见的是 WAF 拦了请求（见 docs/API.md 1.2）。
-	// 两者都按"可能过期"上报，由上层"能否取到一份不同的 Cookie"决定要不要重试。
-	switch resp.StatusCode {
-	case 401:
-		return nil, fmt.Errorf("%w：登录态已失效(401)，请重新运行 tzzb login", ErrAuthExpired)
-	case 403:
-		return nil, fmt.Errorf("%w：被服务器拒绝(403)，Cookie 可能已过期，请重新运行 tzzb login", ErrAuthExpired)
-	}
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, truncate(string(data), 200))
-	}
-	return data, nil
+	return nil, fmt.Errorf("%w：被服务器拒绝(403)，已用新 token 重试 %d 次仍失败，Cookie 可能已过期，请重新运行 tzzb login",
+		ErrAuthExpired, max403Retries+1)
 }
 
 func truncate(s string, n int) string {

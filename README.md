@@ -145,26 +145,32 @@ tzzb export position -f json
 
 ## 反爬（`hexin-v`）
 
-接口要求每个请求带 `hexin-v` 头（值等于 Cookie 里的 `v`），它由页面上的
-`chameleon.min.<ver>.js` 生成。2026-10-22 实测定位到规则：
+接口要求每个请求都携带一枚**新的**反爬 token（Cookie 里的 `v` / `hexin-v` 头），它由页面上的
+`chameleon.min.<ver>.js` 生成。2026-10-28 抓包确认：官方 PC 页面是**每个请求换一枚新 token
+并写回 Cookie 的 `v`**，**不发 `hexin-v` 头**；服务端两种都认，关键是 token 不能复用：
 
 | 发法 | 结果 |
 | --- | --- |
-| 不带 `hexin-v` | 200，但拿到的是**空模板数据** |
-| 固定一个 `hexin-v` 反复用 | 前 8~10 个 200，之后全部 `<h1>Nginx forbidden.</h1>` |
-| **每请求换一个新 `hexin-v`** | **零延迟连发几十个全部 200** |
+| 旧 Cookie `v` + 不带 `hexin-v` 头 | 403 |
+| 新 Cookie `v`（每请求轮换） | 200（官方页面行为） |
+| 旧 Cookie `v` + 新 `hexin-v` 头 | 200 |
+| 固定一个 token 反复用 | 前 8~10 个 200，之后全部 `<h1>Nginx forbidden.</h1>` |
+| **每请求换新 token** | **零延迟连发几十个全部 200** |
 
-所以 403 既不是 IP 封禁，也不是频率限流，而是 **token 复用超限**。
+token 是 60 字符 URL-safe base64，解码后 45 字节（版本 3），payload 里只有时间戳和
+计数器会变、其余是会话模板，所以 `internal/hexinv` 用两条路径：
 
-`internal/hexinv` 把官方 chameleon 脚本内置进二进制，用纯 Go 的 JS 引擎
-[goja](https://github.com/dop251/goja) + 最小 DOM 垫片跑起来，**每请求现算一个新 token**：
+1. **数学刷新（主路径，不跑 JS）**：解码 Cookie 里的 `v` → 时间戳改当前秒、计数器 +1 →
+   重算校验位 → 重编码，写回**内存** Cookie（不写盘），同时设 `hexin-v` 头；
+2. **chameleon 兜底**：Cookie 里没有可识别的 v3 token 时，用纯 Go 的 JS 引擎
+   [goja](https://github.com/dop251/goja) + 最小 DOM 垫片跑内置的官方 chameleon 脚本现算一枚
+   （不需要 Chromium、不需要 Node；初始化约 30ms，之后每枚 token 微秒级）。
 
-- 不需要 Chromium、不需要 Node、不需要额外进程；
-- 初始化约 30ms，之后每个 token 微秒级；
-- 脚本版本约 `Unix秒/1000`（每 ~17 分钟滚动），缓存 30 分钟，失败自动退回内置副本，
-  完全离线也能工作。
+被 403 拒绝时会换一枚新 token 有界重试（最多 2 次，300ms/900ms），连续失败才按登录态
+失效上报。脚本版本约 `Unix秒/1000`（每 ~17 分钟滚动），缓存 30 分钟，失败自动退回内置副本，
+完全离线也能工作。
 
-相关环境变量：`TZZB_NO_HEXIN=1`（关闭自动生成）、`TZZB_CHAMELEON_JS=<path>`
+相关环境变量：`TZZB_NO_HEXIN=1`（关闭自动刷新/生成）、`TZZB_CHAMELEON_JS=<path>`
 （指定本地脚本）、`TZZB_REQUEST_INTERVAL_MS=<n>`（请求间隔，默认 100ms）。
 
 ## 已知限制

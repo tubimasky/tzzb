@@ -41,28 +41,54 @@
 
 ### 1.5 hexin-v 反爬 token（403 的真正主因）
 
-页面上的 `chameleon.min.<ver>.js` 会给每个 XHR 注入 `hexin-v` 头，值等于 Cookie 里的
-`v`。实测结论（2026-10-22，同一台机器/同一出口 IP/同一 Cookie）：
+页面上的 `chameleon.min.<ver>.js` 会生成反爬 token（Cookie 里的 `v` / `hexin-v` 头）。
+**2026-10-28 抓包修正**：官方 PC 页面实际是**每个请求换一枚新 token 并写回 Cookie 的 `v`**，
+**不发 `hexin-v` 请求头**（11 个请求里 10 个带不同 `v`、0 个带 `hexin-v`、0 个 `Set-Cookie`，
+`v` 由 chameleon 在页面里执行 `document.cookie=...` 写入）。
+
+服务端两种都认，关键是"每次请求都用一枚新 token"：
 
 | 发法 | 结果 |
 | --- | --- |
-| 不带 `hexin-v` | 200（能过，但拿到的是空模板数据） |
-| 固定一个 `hexin-v` 复用 | 前 8~10 个 200，之后全部 `<h1>Nginx forbidden.</h1>` |
-| **每请求换一个新 `hexin-v`** | **零延迟连发几十个全部 200** |
+| 旧 Cookie `v` + 不带 `hexin-v` 头 | 403 |
+| 新 Cookie `v`（每请求轮换）+ 不带 `hexin-v` 头 | 200（官方页面行为） |
+| 旧 Cookie `v` + 新 `hexin-v` 头 | 200 |
+| 同一个 token 反复用 | 前 8~10 个 200，之后全部 `<h1>Nginx forbidden.</h1>` |
+| **每请求换一枚新 token** | **零延迟连发几十个全部 200** |
 
 所以 403 的成因既不是 IP 封禁，也不是频率限流，而是 **token 复用超限**。浏览器里看起来
 "永不封"，只是因为 chameleon 每发一个请求就重新生成一次 token。
 
-token 形态：60 字符 URL-safe base64，以 `A` 开头，编码了时间等信息。生成它需要跑
-chameleon 脚本（混淆过的），本仓库的做法见 `internal/hexinv`：
+token 形态与刷新方法（2026-10-28 用官方脚本生成 200 枚 token 统计得出）：
 
-- 用 `go:embed` 内置一份 chameleon 脚本；
-- 用纯 Go 的 JS 引擎 [goja](https://github.com/dop251/goja) + 最小 DOM 垫片把它跑起来；
-- 每次要 token 时触发一次 `XMLHttpRequest.open`，chameleon 就会把新 `v` 写回
-  `document.cookie`，取出来即可。
+- 60 字符 URL-safe base64，解码后 45 字节；
+- `raw[0] = 3`（版本），`raw[1]` 是校验和，`raw[2:]` 是 43 字节 payload，逐字节异或混淆；
+- payload 里只有少数几个字段会变，其余是**会话/设备模板**（换会话会变，不能随机构造）：
 
-不需要 Chromium，也不需要 Node。脚本可以自动跟进版本：版本号约为 `Unix秒/1000`
-（每 ~17 分钟滚动），旧版本 CDN 仍可访问，见 `hexinv.ScriptURLTemplate`。
+  | 区间 | 内容 |
+  | --- | --- |
+  | `[0:8]` | 会话/设备 ID |
+  | `[8:12]` | Unix 秒（大端） |
+  | `[12:20]` | 指纹相关字段 |
+  | `[20:40]` | 基本固定（多为 0 与少量常量） |
+  | `[40:42]` | 计数器（大端 uint16，每枚 token +1） |
+  | `[42]` | `=3` |
+
+- 因此正确做法是**数学刷新**：解码 → 时间戳改成当前秒、计数器 +1 → 重算校验位 → 重编码。
+  实测：从 6 天前的旧 `v` 刷新后连续请求全部 200；随机改模板则约 20% 概率 403。
+
+本仓库的做法（`internal/hexinv`）：
+
+1. **主路径（数学刷新，不跑 JS）**：解码 Cookie 里的 `v`，改时间/计数后重新编码，
+   写回**内存** Cookie（不写盘），同时设置 `hexin-v` 头；
+2. **兜底**：Cookie 里没有可识别的 v3 token 时，用纯 Go 的 JS 引擎
+   [goja](https://github.com/dop251/goja) + 最小 DOM 垫片跑官方 chameleon 脚本现算一枚
+   （`go:embed` 内置脚本；不需要 Chromium、不需要 Node）；
+3. **403 有界重试**：被拒时换一枚新 token 重试（最多 2 次，300ms/900ms），
+   连续失败才按登录态失效上报。
+
+脚本可以自动跟进版本：版本号约为 `Unix秒/1000`（每 ~17 分钟滚动），旧版本 CDN 仍可访问，
+见 `hexinv.ScriptURLTemplate`。
 
 ### 1.3 Cookie 与 uid
 
@@ -82,8 +108,8 @@ userid=<uid>
 user_id=<uid>
 ```
 
-另外每个请求还会自动带一个**全新生成**的 `hexin-v` 头（见 §1.5），由
-`internal/hexinv` 负责，业务代码无需关心。
+另外每个请求都会换一枚**新反爬 token**（同时写进 Cookie 的 `v` 和 `hexin-v` 头，
+见 §1.5），由 `internal/hexinv` 负责，业务代码无需关心。
 
 ---
 

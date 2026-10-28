@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/liyanran/tzzb-cli/internal/browsercookie"
 	"github.com/liyanran/tzzb-cli/internal/formatter"
@@ -47,16 +48,19 @@ func init() {
 		return result.Cookie, nil
 	})
 
-	// 反爬：同花顺要求每个请求带 hexin-v 头，且每个请求都要换新 token
-	// （同一个 token 复用约 8~10 次后就会被判 403）。token 由页面上的
-	// chameleon 脚本生成，这里用纯 Go 的 JS 引擎跑同一份脚本自己算，
-	// 不依赖浏览器。TZZB_NO_HEXIN=1 可关闭（便于排查问题）。
+	// 反爬（hexin-v）两套策略：
+	//  1) API 主路径：数学刷新 Cookie 里的 v。官方页面每个请求都会换一枚
+	//     新 token 并写回 Cookie 的 v（不发 hexin-v 头），token 里只有时间戳
+	//     和计数器会变，所以解码后改时间/计数、重算校验位即可，不用跑 JS。
+	//  2) 兜底：Cookie 里没有可识别的 v3 token 时，用纯 Go 的 JS 引擎跑官方
+	//     chameleon 脚本现算一枚（登录页也复用这条路径），不依赖浏览器。
+	// TZZB_NO_HEXIN=1 可整体关闭（便于排查问题）。
 	if !envBool("TZZB_NO_HEXIN") {
 		var (
 			hexinMu  sync.Mutex
 			hexinGen *hexinv.Generator
 		)
-		hexinToken = func() (string, error) {
+		newToken := func() (string, error) {
 			hexinMu.Lock()
 			defer hexinMu.Unlock()
 			if hexinGen == nil {
@@ -69,7 +73,21 @@ func init() {
 			}
 			return hexinGen.Token()
 		}
-		apiClient.SetHexinProvider(hexinToken)
+		hexinToken = newToken
+		apiClient.SetVTokenProvider(func(cookies string) (string, string, error) {
+			if newCookies, tok, ok := hexinv.RefreshCookie(cookies, time.Now()); ok {
+				return newCookies, tok, nil
+			}
+			tok, err := newToken()
+			if err != nil {
+				return "", "", err
+			}
+			newCookies, ok := hexinv.SetCookieV(cookies, tok)
+			if !ok {
+				return cookies, tok, nil
+			}
+			return newCookies, tok, nil
+		})
 	}
 
 	// 全局 --json 标志
